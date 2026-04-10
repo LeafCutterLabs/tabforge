@@ -6,6 +6,8 @@
     <title>tabForge Web Demo</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Library for ZIP packaging -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style id="custom-theme-vars">
         :root {
             --editor-lh: 24px;
@@ -159,7 +161,7 @@
         .tab-dragging { opacity: 0.3; border: 2px dashed var(--accent-color) !important; }
 
         /* Toolbar button stability */
-        #toolbar-buttons button {
+        .stable-btn {
             width: 32px;
             height: 32px;
             display: flex;
@@ -167,6 +169,7 @@
             justify-content: center;
             border: 1px solid transparent;
             transition: all 0.2s;
+            border-radius: 0.375rem;
         }
 
         .btn-active {
@@ -187,18 +190,6 @@
             font-size: 9px;
             letter-spacing: 0.05em;
         }
-
-        .stat-badge {
-            background: rgba(0,0,0,0.05);
-            padding: 1px 4px;
-            border-radius: 3px;
-            margin-right: 4px;
-            border: 1px solid rgba(0,0,0,0.03);
-        }
-        .theme-dark .stat-badge, .theme-matrix .stat-badge {
-            background: rgba(255,255,255,0.05);
-            border-color: rgba(255,255,255,0.05);
-        }
     </style>
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
@@ -209,26 +200,40 @@
                 <i data-lucide="file-text" class="w-4 h-4"></i>
                 <span class="text-xs font-black uppercase tracking-tighter hidden sm:inline">tabForge</span>
             </div>
-            <button id="add-tab-btn" class="p-1 hover:bg-white/10 rounded transition-colors" title="New File"><i data-lucide="plus-square" class="w-4 h-4"></i></button>
-            <button id="import-btn" class="p-1 hover:bg-white/10 rounded transition-colors" title="Import Text Files"><i data-lucide="upload" class="w-4 h-4"></i></button>
-            <input type="file" id="file-input" class="hidden" multiple accept=".txt">
-            <div class="h-4 w-px bg-white/20 mx-1"></div>
-            <div class="flex items-center space-x-1" id="toolbar-buttons">
-                <button id="toggle-line-numbers" class="rounded transition-all" title="Line Numbers"><i data-lucide="list-ordered" class="w-4 h-4"></i></button>
-                <button id="toggle-zebra" class="rounded transition-all" title="Zebra Mode"><i data-lucide="rows" class="w-4 h-4"></i></button>
-                
-                <button id="toggle-tab-orientation" class="rounded transition-all" title="Toggle Tab Orientation">
+            <!-- WORKSPACE ACTIONS (Left of divider) -->
+            <div class="flex items-center space-x-0.5">
+                <button id="add-tab-btn" class="stable-btn hover:bg-white/10" title="New File"><i data-lucide="plus-square" class="w-4 h-4"></i></button>
+                <button id="import-btn" class="stable-btn hover:bg-white/10" title="Import Text Files"><i data-lucide="upload" class="w-4 h-4"></i></button>
+                <button id="export-all-btn" class="stable-btn hover:bg-white/10" title="Export All Tabs">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M7 15l5 5 5-5M12 9v11" />
+                        <path d="M4 9V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4" />
+                        <path d="M4 13h16" />
+                    </svg>
+                </button>
+                <button id="toggle-tab-orientation" class="stable-btn transition-all" title="Toggle Tab Orientation">
                     <svg id="orient-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
                 </button>
-
-                <button id="toggle-outline-mode" class="rounded transition-all" title="Toggle Magic Outline Mode">
+            </div>
+            
+            <input type="file" id="file-input" class="hidden" multiple accept=".txt">
+            
+            <!-- THE VERTICAL DIVIDER -->
+            <div class="h-4 w-px bg-white/20 mx-1"></div>
+            
+            <!-- FILE/EDITOR ACTIONS (Right of divider) -->
+            <div class="flex items-center space-x-1" id="toolbar-buttons">
+                <button id="export-tab-btn" class="stable-btn hover:bg-white/10" title="Export Current Tab"><i data-lucide="download" class="w-4 h-4"></i></button>
+                <button id="toggle-line-numbers" class="stable-btn transition-all" title="Line Numbers"><i data-lucide="list-ordered" class="w-4 h-4"></i></button>
+                <button id="toggle-zebra" class="stable-btn transition-all" title="Zebra Mode"><i data-lucide="rows" class="w-4 h-4"></i></button>
+                <button id="toggle-outline-mode" class="stable-btn transition-all" title="Toggle Magic Outline Mode">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="4" cy="6" r="1.5"/><path d="M9 6h11"/>
                         <circle cx="7" cy="12" r="1.5"/><path d="M12 12h8"/>
                         <circle cx="4" cy="18" r="1.5"/><path d="M9 18h11"/>
                     </svg>
                 </button>
-                <button id="normalize-btn" class="rounded transition-colors hover:text-accent" title="Normalize Selection (Feather Duster)">
+                <button id="normalize-btn" class="stable-btn transition-colors hover:text-accent" title="Normalize Selection (Feather Duster)">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M18 18L13 13" />
                         <path d="M12 12C9 14 6 12 4 9C2 6 5 3 8 2C11 1 14 4 12 12Z" />
@@ -237,13 +242,13 @@
                         <path d="M7 10L4 12" />
                     </svg>
                 </button>
-                <button id="toggle-view-mode" class="rounded text-accent transition-colors hidden" title="Cycle View Layout">
+                <button id="toggle-view-mode" class="stable-btn text-accent transition-colors hidden" title="Cycle View Layout">
                     <i id="view-mode-icon" data-lucide="columns" class="w-4 h-4"></i>
                 </button>
             </div>
         </div>
         <div class="flex items-center space-x-3">
-            <button id="open-settings-btn" class="p-1 hover:bg-white/10 rounded transition-colors" title="Settings">
+            <button id="open-settings-btn" class="stable-btn hover:bg-white/10 rounded transition-colors" title="Settings">
                 <i data-lucide="settings" class="w-4 h-4"></i>
             </button>
             <div class="hidden md:flex items-center text-[10px] space-x-1 opacity-60">
@@ -313,6 +318,14 @@
             </div>
 
             <div class="pt-4 border-t border-slate-100">
+                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Export Preferences</label>
+                <div class="flex items-center space-x-2">
+                    <input type="checkbox" id="zip-export-toggle" class="w-4 h-4 rounded text-accent focus:ring-accent border-slate-300">
+                    <label for="zip-export-toggle" class="text-xs text-slate-600">Package all exports as .zip</label>
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100">
                 <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Normalization</label>
                 <div class="space-y-4">
                     <input type="text" id="norm-separator" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder=".">
@@ -339,15 +352,15 @@
             multiViewMode: 'vert',
             lastTabTime: 0,
             tempOutlineDisabled: false,
-            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal' },
+            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false },
             norm: { separator: '.' }
         };
 
         let draggedTabId = null;
 
-        const STORAGE_KEY_TABS = 'tabforge_tabs_v52';
-        const STORAGE_KEY_ACTIVE = 'tabforge_active_v52';
-        const STORAGE_KEY_THEME = 'tabforge_theme_v52';
+        const STORAGE_KEY_TABS = 'tabforge_tabs_v54';
+        const STORAGE_KEY_ACTIVE = 'tabforge_active_v54';
+        const STORAGE_KEY_THEME = 'tabforge_theme_v54';
 
         function numToRoman(n, lower = false) { 
             const val = n > 0 && n <= ROMAN.length ? ROMAN[n - 1] : null;
@@ -443,7 +456,7 @@
             ta.oninput = (e) => updateContent(tab.id, e.target.value, e.target);
             ta.onclick = () => { 
                 if (document.getElementById('settings-menu').classList.contains('open')) toggleSettings(false); 
-                state.activeTabId = tab.id; // Focus tab on click for multi-view stats
+                state.activeTabId = tab.id;
                 updateToolbarUI();
             };
             ta.onkeydown = (e) => {
@@ -513,7 +526,12 @@
             if (!t) return;
             
             // Standard Toggles
-            const toggles = [{id: 'toggle-line-numbers', active: t.showLineNumbers}, {id: 'toggle-zebra', active: t.showZebra}, {id: 'toggle-outline-mode', active: t.outlineModeActive}];
+            const toggles = [
+                {id: 'toggle-line-numbers', active: t.showLineNumbers}, 
+                {id: 'toggle-zebra', active: t.showZebra}, 
+                {id: 'toggle-outline-mode', active: t.outlineModeActive}
+            ];
+            
             toggles.forEach(item => {
                 const btn = document.getElementById(item.id);
                 if (btn) {
@@ -522,7 +540,6 @@
                 }
             });
 
-            // Orientation Button Update
             const orientBtn = document.getElementById('toggle-tab-orientation');
             const isVertical = state.theme.orientation === 'vertical';
             const orientIcon = document.getElementById('orient-icon');
@@ -553,8 +570,47 @@
                 const icon = state.multiViewMode === 'horiz' ? 'rows' : (state.multiViewMode === 'card' ? 'layout-grid' : 'columns');
                 document.getElementById('view-mode-icon').setAttribute('data-lucide', icon);
             } else mvBtn.classList.add('hidden');
+
+            document.getElementById('zip-export-toggle').checked = state.theme.zipExport;
             
             lucide.createIcons();
+        }
+
+        function triggerDownload(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename.endsWith('.txt') ? filename : filename + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+
+        async function exportAll() {
+            if (state.theme.zipExport) {
+                const zip = new JSZip();
+                state.tabs.forEach(tab => {
+                    const name = tab.title.endsWith('.txt') ? tab.title : tab.title + '.txt';
+                    zip.file(name, tab.content);
+                });
+                const blob = await zip.generateAsync({ type: "blob" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = "tabForge_Export.zip";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            } else {
+                state.tabs.forEach((tab, index) => {
+                    setTimeout(() => {
+                        triggerDownload(tab.title, tab.content);
+                    }, index * 200);
+                });
+            }
         }
 
         function getSymbolInfo(line) {
@@ -603,7 +659,10 @@
                 let sym = ""; const sep = state.norm.separator;
                 if (item.info.type === 'bullet') sym = item.info.value;
                 else if (item.info.type === 'number') sym = item.info.value + sep;
-                else if (item.info.type.includes('roman')) sym = numToRoman(item.info.value, item.info.type==='roman-lower') + sep;
+                else if (item.info.type.includes('roman')) {
+                    const v = item.info.value > 0 && item.info.value <= ROMAN.length ? ROMAN[item.info.value - 1] : "";
+                    sym = (item.info.type === 'roman-lower' ? v.toLowerCase() : v) + sep;
+                }
                 else sym = String.fromCharCode((item.info.type==='alpha-upper'?64:96)+item.info.value) + sep;
                 const header = "\t".repeat(item.info.indent) + sym + " " + item.line.replace(/^\t+/, '').replace(item.info.fullSymbol, '').trimStart();
                 return [header, ...item.children].join('\n');
@@ -669,7 +728,7 @@
         function init() {
             const savedTabs = localStorage.getItem(STORAGE_KEY_TABS), savedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE), savedThemeData = localStorage.getItem(STORAGE_KEY_THEME);
             if (savedTabs) { state.tabs = JSON.parse(savedTabs); state.activeTabId = savedActiveId || state.tabs[0].id; }
-            else { state.tabs = [{ id: '1', title: 'tabForge.txt', content: '1. Welcome to tabForge\n3. This works in multi-view too\n2. Reorder your workspace\n\n- Bullets stay simple\n\nCheck the stats in the footer!', manuallyRenamed: false, showLineNumbers: true, showZebra: true, outlineModeActive: true }]; state.activeTabId = '1'; }
+            else { state.tabs = [{ id: '1', title: 'tabForge.txt', content: '1. Welcome to tabForge\n3. Export single or all tabs\n2. Reorder your workspace\n\nCheck stats in the footer!', manuallyRenamed: false, showLineNumbers: true, showZebra: true, outlineModeActive: true }]; state.activeTabId = '1'; }
             if (savedThemeData) { const p = JSON.parse(savedThemeData); state.theme = p.theme; state.norm = p.norm; state.multiViewIds = p.multiViewIds || []; state.multiViewMode = p.multiViewMode || 'vert'; }
             applyTheme(); setupListeners();
         }
@@ -677,6 +736,11 @@
         function setupListeners() {
             document.getElementById('add-tab-btn').onclick = () => addTab();
             document.getElementById('import-btn').onclick = () => document.getElementById('file-input').click();
+            document.getElementById('export-tab-btn').onclick = () => {
+                const t = state.tabs.find(x => x.id === state.activeTabId);
+                if (t) triggerDownload(t.title, t.content);
+            };
+            document.getElementById('export-all-btn').onclick = () => exportAll();
             document.getElementById('file-input').onchange = (e) => { Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onload = (ev) => addTab(file.name, ev.target.result); r.readAsText(file); }); e.target.value = ''; };
             document.getElementById('normalize-btn').onclick = () => normalizeSelection();
             document.getElementById('open-settings-btn').onclick = () => toggleSettings(true);
@@ -687,17 +751,12 @@
             document.querySelectorAll('.mode-btn').forEach(btn => { btn.onclick = () => { state.theme.mode = btn.dataset.mode; applyTheme(); saveToStorage(); }; });
             document.getElementById('accent-swatches').onclick = (e) => { if (e.target.classList.contains('swatch')) { state.theme.accent = e.target.getAttribute('data-color'); applyTheme(); saveToStorage(); } };
             document.getElementById('hex-accent').oninput = (e) => { if (/^[0-9A-Fa-f]{6}$/.test(e.target.value)) { state.theme.accent = '#' + e.target.value; applyTheme(); saveToStorage(); } };
+            document.getElementById('zip-export-toggle').onchange = (e) => { state.theme.zipExport = e.target.checked; saveToStorage(); };
             document.getElementById('norm-separator').oninput = (e) => { state.norm.separator = e.target.value; applyTheme(); saveToStorage(); };
-            document.getElementById('reset-theme-btn').onclick = () => { state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal' }; state.norm = { separator: '.' }; applyTheme(); saveToStorage(); };
+            document.getElementById('reset-theme-btn').onclick = () => { state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false }; state.norm = { separator: '.' }; applyTheme(); saveToStorage(); };
             document.getElementById('toggle-line-numbers').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.showLineNumbers = !t.showLineNumbers; render(); };
             document.getElementById('toggle-zebra').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.showZebra = !t.showZebra; render(); };
             document.getElementById('toggle-outline-mode').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.outlineModeActive = !t.outlineModeActive; render(); };
-        }
-
-        function getNextLevelSymbol(info, reverse = false) {
-            const sep = state.norm.separator; if (info.type === 'bullet') return info.value === '-' ? '*' : '-';
-            const idx = HIERARCHY.indexOf(info.type); const nextType = HIERARCHY[(idx + (reverse ? -1 : 1) + HIERARCHY.length) % HIERARCHY.length];
-            if (nextType === 'number') return "1" + sep; if (nextType === 'roman') return "I" + sep; if (nextType === 'roman-lower') return "i" + sep; if (nextType === 'alpha') return "a" + sep; return "A" + sep;
         }
 
         window.onload = init;
