@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tabForge Web Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style id="custom-theme-vars">
+        :root {
+            --editor-lh: 24px;
+            --editor-fs: 14px;
+            --gutter-width: 35px;
+            --text-indent: 8px;
+            
+            /* TRUE DEFAULT THEME */
+            --accent-color: #2563eb;  
+            --editor-bg: #ffffff;
+            --editor-text: #111827;
+            --editor-stripe: #f8fafc;
+            --bg-ui-dark: #1e293b;    
+            --bg-ui-page: #f1f5f9;    
+            --tab-active-bg: #ffffff;
+            --tab-active-text: #111827;
+            --tab-inactive-bg: rgba(0, 0, 0, 0.2);
+            --border-color: #e2e8f0;
+            --header-text: #f8fafc;
+            --footer-bg: #ffffff;
+            --grid-gap-color: #e2e8f0;
+        }
+
+        .theme-light {
+            --bg-ui-dark: #f8fafc;    
+            --header-text: #64748b;
+            --bg-ui-page: #ffffff;
+            --border-color: #e2e8f0;
+            --tab-inactive-bg: rgba(0, 0, 0, 0.05);
+            --footer-bg: #ffffff;
+            --grid-gap-color: #e2e8f0;
+        }
+
+        .theme-dark {
+            --editor-bg: #1e293b;
+            --editor-text: #f8fafc;
+            --bg-ui-dark: #0f172a;
+            --bg-ui-page: #020617;
+            --editor-stripe: #334155;
+            --tab-active-bg: #1e293b;
+            --tab-active-text: #ffffff;
+            --header-text: #94a3b8;
+            --border-color: rgba(255,255,255,0.1);
+            --tab-inactive-bg: rgba(0, 0, 0, 0.25);
+            --footer-bg: #0f172a;
+            --grid-gap-color: #1e293b;
+        }
+
+        .theme-matrix {
+            --editor-bg: #0d0d0d;
+            --editor-text: #00FF41;
+            --accent-color: #008f11;
+            --bg-ui-dark: #000000;
+            --bg-ui-page: #050505;
+            --editor-stripe: transparent;
+            --tab-active-bg: #000000;
+            --tab-active-text: #00FF41;
+            --header-text: #008f11;
+            --border-color: #003b00;
+            --tab-inactive-bg: rgba(0, 255, 65, 0.1);
+            --footer-bg: #000000;
+            --grid-gap-color: #003b00;
+        }
+
+        .theme-matrix .zebra-mode {
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 255, 65, 0.06) 0px,
+                rgba(0, 255, 65, 0.06) 1px,
+                transparent 1px,
+                transparent 24px
+            ) !important;
+            background-size: 100% 24px !important;
+        }
+    </style>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        textarea::selection { background: var(--accent-color); color: white; }
+        
+        body { background-color: var(--bg-ui-page); transition: background-color 0.2s, color 0.2s; color: var(--editor-text); }
+        header { background-color: var(--bg-ui-dark); border-bottom: 1px solid var(--border-color); color: var(--header-text); transition: background-color 0.2s; z-index: 50; }
+
+        #tabs-container { background-color: var(--bg-ui-dark); transition: background-color 0.2s; }
+        
+        #editor-container { background-color: var(--bg-ui-page); }
+        .editor-cell { background-color: var(--editor-bg); transition: background-color 0.2s; }
+
+        textarea { 
+            caret-color: var(--accent-color); 
+            outline: none !important; 
+            font-size: var(--editor-fs);
+            line-height: var(--editor-lh);
+            padding-left: var(--text-indent) !important;
+            padding-right: var(--text-indent) !important;
+            color: var(--editor-text) !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background-color: transparent;
+            border: none;
+            margin: 0; width: 100%; height: 100%; resize: none; white-space: pre;
+        }
+        
+        .line-numbers {
+            font-variant-numeric: tabular-nums;
+            user-select: none;
+            font-size: var(--editor-fs);
+            line-height: var(--editor-lh);
+            padding-top: 0; padding-bottom: 24px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            overflow: hidden;
+            background-color: var(--editor-stripe);
+            color: #94a3b8;
+            border-right: 1px solid var(--border-color);
+            width: var(--gutter-width) !important;
+            text-align: right; padding-right: 6px; flex-shrink: 0;
+        }
+
+        .zebra-mode {
+            background-image: linear-gradient(
+                var(--editor-bg) 0px, var(--editor-bg) 24px,
+                var(--editor-stripe) 24px, var(--editor-stripe) 48px
+            ) !important;
+            background-size: 100% 48px !important;
+            background-attachment: local !important;
+        }
+
+        /* --- Tab Styling --- */
+        .tab-btn { transition: all 0.2s; cursor: pointer; user-select: none; border-style: solid; border-color: transparent; }
+        
+        /* Horizontal Mode */
+        .tabs-horizontal .tab-btn { border-width: 5px 5px 0 5px; border-radius: 8px 8px 0 0; margin-bottom: -1px; height: 100%; }
+        .tabs-horizontal .tab-active { background-color: var(--tab-active-bg) !important; color: var(--tab-active-text) !important; border-color: var(--accent-color) !important; z-index: 10; margin-top: 2px; }
+        
+        /* Vertical Mode */
+        .tabs-vertical .tab-btn { border-width: 5px 0 5px 5px; border-radius: 8px 0 0 8px; margin-right: -1px; width: 100%; margin-bottom: 2px; height: 36px; padding: 0 12px; }
+        .tabs-vertical .tab-active { background-color: var(--tab-active-bg) !important; color: var(--tab-active-text) !important; border-color: var(--accent-color) !important; z-index: 10; margin-left: 2px; }
+
+        /* INACTIVE TABS - CLEANER DELINEATION */
+        .tab-inactive { 
+            color: #94a3b8 !important; 
+            background-color: var(--tab-inactive-bg); 
+            border-color: transparent !important; 
+        }
+        .tab-inactive:hover { background-color: rgba(255, 255, 255, 0.1); color: #cbd5e1 !important; }
+
+        #settings-menu { transform: translateX(100%); transition: transform 0.2s ease-in-out; }
+        #settings-menu.open { transform: translateX(0); }
+
+        .swatch { width: 1.25rem; height: 1.25rem; cursor: pointer; border-radius: 4px; border: 2px solid transparent; transition: transform 0.1s; }
+        .swatch.active { border-color: #cbd5e1; box-shadow: 0 0 0 2px var(--accent-color); transform: scale(1.1); }
+        
+        .tab-dragging { opacity: 0.3; border: 2px dashed var(--accent-color) !important; }
+
+        /* Toolbar button stability */
+        #toolbar-buttons button {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .btn-active {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+            opacity: 1 !important;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        }
+
+        footer { background-color: var(--footer-bg); border-top: 1px solid var(--border-color); z-index: 50; }
+
+        .mv-cell-header {
+            background-color: var(--bg-ui-dark);
+            border-bottom: 1px solid var(--border-color);
+            color: var(--header-text);
+            opacity: 0.8;
+            font-size: 9px;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+<body class="font-sans h-screen flex flex-col overflow-hidden">
+
+    <header class="h-10 flex items-center justify-between px-3 shrink-0">
+        <div class="flex items-center space-x-1">
+            <div class="flex items-center space-x-2 text-accent mr-2">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span class="text-xs font-black uppercase tracking-tighter hidden sm:inline">tabForge</span>
+            </div>
+            <button id="add-tab-btn" class="p-1 hover:bg-white/10 rounded transition-colors" title="New File"><i data-lucide="plus-square" class="w-4 h-4"></i></button>
+            <button id="import-btn" class="p-1 hover:bg-white/10 rounded transition-colors" title="Import Text Files"><i data-lucide="upload" class="w-4 h-4"></i></button>
+            <input type="file" id="file-input" class="hidden" multiple accept=".txt">
+            <div class="h-4 w-px bg-white/20 mx-1"></div>
+            <div class="flex items-center space-x-1" id="toolbar-buttons">
+                <button id="toggle-line-numbers" class="rounded transition-all" title="Line Numbers"><i data-lucide="list-ordered" class="w-4 h-4"></i></button>
+                <button id="toggle-zebra" class="rounded transition-all" title="Zebra Mode"><i data-lucide="rows" class="w-4 h-4"></i></button>
+                
+                <!-- Tab Orientation Toggle (Sketch-Accurate Icon) -->
+                <button id="toggle-tab-orientation" class="rounded transition-all" title="Toggle Tab Orientation">
+                    <svg id="orient-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <!-- Path dynamically set via JS to match sketch -->
+                    </svg>
+                </button>
+
+                <button id="toggle-outline-mode" class="rounded transition-all" title="Toggle Magic Outline Mode">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="4" cy="6" r="1.5"/><path d="M9 6h11"/>
+                        <circle cx="7" cy="12" r="1.5"/><path d="M12 12h8"/>
+                        <circle cx="4" cy="18" r="1.5"/><path d="M9 18h11"/>
+                    </svg>
+                </button>
+                <button id="normalize-btn" class="rounded transition-colors hover:text-accent" title="Normalize Selection (Feather Duster)">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 18L13 13" />
+                        <path d="M12 12C9 14 6 12 4 9C2 6 5 3 8 2C11 1 14 4 12 12Z" />
+                        <path d="M9 7L5 5" />
+                        <path d="M10 5L8 3" />
+                        <path d="M7 10L4 12" />
+                    </svg>
+                </button>
+                <button id="toggle-view-mode" class="rounded text-accent transition-colors hidden" title="Cycle View Layout">
+                    <i id="view-mode-icon" data-lucide="columns" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+        <div class="flex items-center space-x-3">
+            <button id="open-settings-btn" class="p-1 hover:bg-white/10 rounded transition-colors" title="Settings">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+            </button>
+            <div class="hidden md:flex items-center text-[10px] space-x-1 opacity-60">
+                <i data-lucide="cloud-check" class="w-3 h-3 text-green-500"></i>
+                <span id="save-status">Sync Active</span>
+            </div>
+        </div>
+    </header>
+
+    <div id="app-body" class="flex flex-1 overflow-hidden flex-col">
+        <nav id="tabs-container" class="flex shrink-0 overflow-auto no-scrollbar"></nav>
+        <main id="editor-container" class="flex-1 relative overflow-hidden"></main>
+    </div>
+
+    <footer class="text-slate-400 text-[10px] px-3 h-6 flex justify-between items-center shrink-0">
+        <div class="flex space-x-4 items-center">
+            <span id="status-filename">untitled.txt</span>
+            <span id="status-lines">Lines: 1</span>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span id="status-mode" class="text-accent font-bold uppercase tracking-tighter">Editor Active</span>
+            <span class="uppercase">UTF-8</span>
+        </div>
+    </footer>
+
+    <!-- Settings Overlay -->
+    <div id="settings-overlay" class="fixed inset-0 bg-black/40 hidden z-[60] transition-opacity duration-200 opacity-0"></div>
+    <aside id="settings-menu" class="fixed top-0 right-0 h-full w-64 bg-white border-l border-slate-200 z-[70] p-6 shadow-2xl transition-colors overflow-y-auto text-slate-800">
+        <div class="flex items-center justify-between mb-8">
+            <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400">Settings</h2>
+            <button id="close-settings-btn" class="p-1 hover:bg-slate-100 rounded text-slate-400"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+
+        <div class="space-y-8">
+            <div>
+                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Interface Theme</label>
+                <div class="grid grid-cols-2 gap-2">
+                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="default">Default</button>
+                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="light">Light</button>
+                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="dark">Dark</button>
+                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="matrix">Matrix</button>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Accent Color</label>
+                <div class="flex flex-wrap gap-2 mb-4" id="accent-swatches">
+                    <div class="swatch bg-[#2563eb]" data-color="#2563eb"></div>
+                    <div class="swatch bg-[#9333ea]" data-color="#9333ea"></div>
+                    <div class="swatch bg-[#059669]" data-color="#059669"></div>
+                    <div class="swatch bg-[#ea580c]" data-color="#ea580c"></div>
+                    <div class="swatch bg-[#db2777]" data-color="#db2777"></div>
+                </div>
+                <div class="flex items-center bg-slate-50 rounded px-2 py-1.5 border border-slate-200">
+                    <span class="text-[10px] font-mono text-slate-400 mr-2">#</span>
+                    <input type="text" id="hex-accent" class="bg-transparent border-none outline-none text-xs font-mono w-full text-slate-600" maxlength="6" placeholder="2563eb">
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100">
+                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Normalization</label>
+                <div class="space-y-4">
+                    <input type="text" id="norm-separator" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder=".">
+                    <div class="bg-slate-50 rounded p-2 border border-slate-200">
+                        <div class="text-[10px] font-mono text-slate-500" id="norm-example">1. Item Content</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100">
+                <button id="reset-theme-btn" class="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-400 rounded text-[10px] font-bold uppercase transition-colors">Restore Defaults</button>
+            </div>
+        </div>
+    </aside>
+
+    <script>
+        const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX", "XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX", "XXXI", "XXXII", "XXXIII", "XXXIV", "XXXV", "XXXVI", "XXXVII", "XXXVIII", "XXXIX", "XL", "XLI", "XLII", "XLIII", "XLIV", "XLV", "XLVI", "XLVII", "XLVIII", "XLIX", "L"];
+        const HIERARCHY = ['roman', 'alpha-upper', 'number', 'alpha', 'roman-lower'];
+
+        let state = {
+            tabs: [],
+            activeTabId: '',
+            multiViewIds: [],
+            multiViewMode: 'vert',
+            lastTabTime: 0,
+            tempOutlineDisabled: false,
+            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal' },
+            norm: { separator: '.' }
+        };
+
+        let draggedTabId = null;
+
+        const STORAGE_KEY_TABS = 'tabforge_tabs_v51';
+        const STORAGE_KEY_ACTIVE = 'tabforge_active_v51';
+        const STORAGE_KEY_THEME = 'tabforge_theme_v51';
+
+        function numToRoman(n, lower = false) { 
+            const val = n > 0 && n <= ROMAN.length ? ROMAN[n - 1] : null;
+            return val && lower ? val.toLowerCase() : val;
+        }
+
+        function render() {
+            const body = document.getElementById('app-body');
+            const tabs = document.getElementById('tabs-container');
+            
+            if (state.theme.orientation === 'vertical') {
+                body.className = "flex flex-1 overflow-hidden flex-row tabs-vertical";
+                tabs.className = "flex flex-col w-[150px] shrink-0 overflow-y-auto no-scrollbar pt-2 border-r border-black/10";
+            } else {
+                body.className = "flex flex-1 overflow-hidden flex-col tabs-horizontal";
+                tabs.className = "flex items-end h-9 px-2 pt-1 overflow-x-auto no-scrollbar shrink-0";
+            }
+
+            renderTabs();
+            renderEditorArea();
+            updateToolbarUI();
+        }
+
+        function renderTabs() {
+            const container = document.getElementById('tabs-container');
+            if (!container) return;
+            container.innerHTML = '';
+            state.tabs.forEach((tab) => {
+                const active = state.activeTabId === tab.id;
+                const mvIndex = state.multiViewIds.indexOf(tab.id);
+                const isSelected = mvIndex !== -1;
+                const el = document.createElement('div');
+                el.draggable = true;
+                el.className = "group flex items-center h-8 px-3 mr-0.5 cursor-pointer text-xs select-none tab-btn " + (active ? 'tab-active shadow-sm' : 'tab-inactive');
+                
+                if (state.theme.orientation === 'horizontal') el.classList.add('min-w-[120px]');
+                
+                el.ondragstart = (e) => { draggedTabId = tab.id; el.classList.add('tab-dragging'); e.dataTransfer.effectAllowed = 'move'; };
+                el.ondragend = () => { el.classList.remove('tab-dragging'); draggedTabId = null; };
+                el.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+                el.ondrop = (e) => {
+                    e.preventDefault();
+                    if (!draggedTabId || draggedTabId === tab.id) return;
+                    const fromIdx = state.tabs.findIndex(t => t.id === draggedTabId);
+                    const toIdx = state.tabs.findIndex(t => t.id === tab.id);
+                    const [moved] = state.tabs.splice(fromIdx, 1);
+                    state.tabs.splice(toIdx, 0, moved);
+                    render(); saveToStorage();
+                };
+
+                el.onclick = () => { state.activeTabId = tab.id; render(); };
+                
+                el.innerHTML = `
+                    <button class="mv-toggle mr-2 w-4 h-4 flex items-center justify-center rounded border transition-colors text-current ${isSelected ? 'border-accent font-bold text-[10px]' : 'border-transparent opacity-60 hover:opacity-100'}">
+                        ${isSelected ? (mvIndex + 1) : '<div class="w-1.5 h-1.5 rounded-full border border-current"></div>'}
+                    </button>
+                    <span class="truncate flex-1">${tab.title}</span>
+                    <button class="close-tab ml-2 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                `;
+
+                el.querySelector('.mv-toggle').onclick = (e) => { e.stopPropagation(); toggleMultiView(tab.id); };
+                el.querySelector('.close-tab').onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
+                container.appendChild(el);
+            });
+            lucide.createIcons();
+        }
+
+        function toggleMultiView(id) {
+            const idx = state.multiViewIds.indexOf(id);
+            if (idx !== -1) state.multiViewIds.splice(idx, 1);
+            else if (state.multiViewIds.length < 4) state.multiViewIds.push(id);
+            render(); saveToStorage();
+        }
+
+        function createEditorElement(tab) {
+            const wrap = document.createElement('div');
+            wrap.className = "flex-1 flex overflow-hidden relative h-full editor-cell";
+            if (tab.showLineNumbers) {
+                const gut = document.createElement('div');
+                gut.className = 'line-numbers shrink-0 h-full';
+                gut.innerHTML = Array.from({length: Math.max(tab.content.split('\n').length, 50)}, (_, i) => i + 1).join('<br>');
+                wrap.appendChild(gut);
+                setTimeout(() => {
+                    const ta = wrap.querySelector('textarea');
+                    if (ta) ta.addEventListener('scroll', () => gut.scrollTop = ta.scrollTop);
+                }, 0);
+            }
+            const ta = document.createElement('textarea');
+            ta.className = "flex-1 w-full resize-none outline-none h-full " + (tab.showZebra ? 'zebra-mode' : '');
+            ta.value = tab.content;
+            ta.oninput = (e) => updateContent(tab.id, e.target.value, e.target);
+            ta.onclick = () => { if (document.getElementById('settings-menu').classList.contains('open')) toggleSettings(false); };
+            ta.onkeydown = (e) => {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' '].includes(e.key) && tab.outlineModeActive) {
+                    setTimeout(() => normalizeSelection(true), 10);
+                }
+                if (e.key === 'Tab' && tab.outlineModeActive && !state.tempOutlineDisabled) {
+                    e.preventDefault();
+                    const start = ta.selectionStart, linesArr = ta.value.split('\n'), lines = ta.value.substring(0, start).split('\n');
+                    const currentIdx = lines.length - 1, currentLine = lines[currentIdx], info = getSymbolInfo(currentLine);
+                    if (e.shiftKey) {
+                        if (info && currentLine.startsWith('\t')) {
+                            const prevSym = getNextLevelSymbol(info, true);
+                            linesArr[currentIdx] = currentLine.substring(1).replace(info.fullSymbol, prevSym);
+                            ta.value = linesArr.join('\n');
+                            ta.selectionStart = ta.selectionEnd = Math.max(0, start - 1 + (prevSym.length - info.fullSymbol.length));
+                        }
+                    } else {
+                        if (info) {
+                            const nextSym = getNextLevelSymbol(info);
+                            linesArr[currentIdx] = '\t' + currentLine.replace(info.fullSymbol, nextSym);
+                            ta.value = linesArr.join('\n');
+                            ta.selectionStart = ta.selectionEnd = start + 1 + (nextSym.length - info.fullSymbol.length);
+                        } else {
+                            ta.value = ta.value.substring(0, start) + "\t" + ta.value.substring(ta.selectionEnd);
+                            ta.selectionStart = ta.selectionEnd = start + 1;
+                        }
+                    }
+                    updateContent(tab.id, ta.value, ta);
+                }
+            };
+            wrap.appendChild(ta);
+            return wrap;
+        }
+
+        function renderEditorArea() {
+            const container = document.getElementById('editor-container');
+            if (!container) return;
+            container.innerHTML = '';
+            if (state.multiViewIds.length > 1) {
+                const grid = document.createElement('div');
+                const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--grid-gap-color').trim();
+                grid.style.backgroundColor = gridColor;
+                grid.className = "grid h-full w-full gap-px";
+                if (state.multiViewMode === 'horiz') grid.className += " grid-cols-1 grid-rows-" + state.multiViewIds.length;
+                else if (state.multiViewMode === 'vert') grid.className += " grid-cols-" + state.multiViewIds.length + " grid-rows-1";
+                else grid.className += " grid-cols-2 grid-rows-2";
+                state.multiViewIds.forEach(id => {
+                    const tab = state.tabs.find(t => t.id === id);
+                    if (tab) {
+                        const cell = document.createElement('div');
+                        cell.className = "flex flex-col h-full overflow-hidden";
+                        cell.innerHTML = `<div class="mv-cell-header px-3 py-1 flex justify-between items-center font-bold uppercase shrink-0"><span>${tab.title}</span></div>`;
+                        cell.appendChild(createEditorElement(tab)); 
+                        grid.appendChild(cell);
+                    }
+                });
+                container.appendChild(grid);
+            } else {
+                const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+                if (activeTab) container.appendChild(createEditorElement(activeTab));
+            }
+        }
+
+        function updateToolbarUI() {
+            const t = state.tabs.find(x => x.id === state.activeTabId);
+            if (!t) return;
+            const toggles = [{id: 'toggle-line-numbers', active: t.showLineNumbers}, {id: 'toggle-zebra', active: t.showZebra}, {id: 'toggle-outline-mode', active: t.outlineModeActive}];
+            toggles.forEach(item => {
+                const btn = document.getElementById(item.id);
+                if (btn) {
+                    if (item.active) btn.classList.add('btn-active');
+                    else btn.classList.remove('btn-active');
+                }
+            });
+
+            const orientBtn = document.getElementById('toggle-tab-orientation');
+            const isVertical = state.theme.orientation === 'vertical';
+            const orientIcon = document.getElementById('orient-icon');
+            
+            if (isVertical) {
+                orientBtn.classList.add('btn-active');
+                // Icon matching user sketch: Tabs aligned left
+                orientIcon.innerHTML = `
+                    <rect x="10" y="4" width="10" height="16" rx="1" fill="none" stroke="currentColor"/>
+                    <rect x="4" y="6" width="4" height="3" rx="0.5" fill="currentColor"/>
+                    <rect x="4" y="10" width="4" height="3" rx="0.5" fill="currentColor"/>
+                    <rect x="4" y="14" width="4" height="3" rx="0.5" fill="currentColor"/>
+                `;
+            } else {
+                orientBtn.classList.remove('btn-active');
+                // Icon matching user sketch: Tabs aligned top
+                orientIcon.innerHTML = `
+                    <rect x="4" y="10" width="16" height="10" rx="1" fill="none" stroke="currentColor"/>
+                    <rect x="6" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>
+                    <rect x="10" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>
+                    <rect x="14" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>
+                `;
+            }
+
+            document.getElementById('status-filename').innerText = t.title;
+            document.getElementById('status-lines').innerText = "Lines: " + t.content.split('\n').length;
+            const mvBtn = document.getElementById('toggle-view-mode');
+            if (state.multiViewIds.length > 1) {
+                mvBtn.classList.remove('hidden');
+                const icon = state.multiViewMode === 'horiz' ? 'rows' : (state.multiViewMode === 'card' ? 'layout-grid' : 'columns');
+                document.getElementById('view-mode-icon').setAttribute('data-lucide', icon);
+            } else mvBtn.classList.add('hidden');
+            lucide.createIcons();
+        }
+
+        function getSymbolInfo(line) {
+            const raw = line.replace(/^\t+/, ''), indent = line.length - raw.length;
+            const bulletMatch = raw.match(/^([\-\*])(\s+)/);
+            const seqMatch = raw.match(/^(\d+|[a-zA-Z]{1}|[IVXLCDMivxlcdm]+)([\.\-\)]?)(\s+)/);
+            if (bulletMatch) return { type: 'bullet', value: bulletMatch[1], fullSymbol: bulletMatch[1], indent, isStart: true, trailingSpace: bulletMatch[2] };
+            if (seqMatch) {
+                const char = seqMatch[1], sep = seqMatch[2], space = seqMatch[3];
+                if (/^\d+$/.test(char)) return { type: 'number', value: parseInt(char), fullSymbol: char + sep, indent, isStart: parseInt(char) === 1, trailingSpace: space };
+                if (ROMAN.includes(char.toUpperCase())) {
+                    const isLower = char === char.toLowerCase(), val = isLower ? ROMAN.map(r=>r.toLowerCase()).indexOf(char)+1 : ROMAN.indexOf(char.toUpperCase())+1;
+                    return { type: isLower ? 'roman-lower' : 'roman', value: val, fullSymbol: char + sep, indent, isStart: val === 1, trailingSpace: space };
+                }
+                if (/^[a-zA-Z]$/.test(char)) {
+                    const isLower = char === char.toLowerCase(), val = char.toLowerCase().charCodeAt(0) - 96;
+                    return { type: isLower ? 'alpha' : 'alpha-upper', value: val, fullSymbol: char + sep, indent, isStart: val === 1, trailingSpace: space };
+                }
+            }
+            return null;
+        }
+
+        function normalizeSelection(isLive = false) {
+            const tab = state.tabs.find(t => t.id === state.activeTabId), ta = document.querySelector('textarea');
+            if (!tab || !ta) return;
+            const start = ta.selectionStart, end = ta.selectionEnd, fullText = ta.value;
+            let lineStart = 0, lineEnd = fullText.length;
+            if (!isLive && start !== end) {
+                lineStart = fullText.lastIndexOf('\n', start - 1) + 1;
+                lineEnd = fullText.indexOf('\n', end);
+                if (lineEnd === -1) lineEnd = fullText.length;
+            }
+            const selection = fullText.substring(lineStart, lineEnd), lines = selection.split('\n'), tree = []; let current = null;
+            lines.forEach(line => {
+                const info = getSymbolInfo(line);
+                if (info && info.indent === 0) { if (current) tree.push(current); current = { info, line, children: [] }; }
+                else if (current) current.children.push(line);
+                else tree.push({ info: null, line, children: [] });
+            });
+            if (current) tree.push(current);
+            const sorted = [...tree].sort((a,b) => (a.info && b.info && a.info.type === b.info.type && a.info.type !== 'bullet') ? a.info.value - b.info.value : 0);
+            const seen = new Set();
+            const result = sorted.map(item => {
+                if (!item.info) return item.line;
+                if (item.info.type !== 'bullet') { const k = item.info.type + "-" + item.info.value; if (seen.has(k)) item.line = "*" + item.line.trim(); seen.add(k); }
+                let sym = ""; const sep = state.norm.separator;
+                if (item.info.type === 'bullet') sym = item.info.value;
+                else if (item.info.type === 'number') sym = item.info.value + sep;
+                else if (item.info.type.includes('roman')) sym = numToRoman(item.info.value, item.info.type==='roman-lower') + sep;
+                else sym = String.fromCharCode((item.info.type==='alpha-upper'?64:96)+item.info.value) + sep;
+                const header = "\t".repeat(item.info.indent) + sym + " " + item.line.replace(/^\t+/, '').replace(item.info.fullSymbol, '').trimStart();
+                return [header, ...item.children].join('\n');
+            }).join('\n');
+            if (fullText.substring(lineStart, lineEnd) !== result) {
+                const oldScroll = ta.scrollTop; ta.value = fullText.substring(0, lineStart) + result + fullText.substring(lineEnd);
+                ta.scrollTop = oldScroll; updateContent(tab.id, ta.value, ta);
+            }
+        }
+
+        function applyTheme() {
+            const root = document.documentElement; const { accent, mode } = state.theme;
+            root.style.setProperty('--accent-color', accent);
+            document.body.classList.remove('theme-light', 'theme-dark', 'theme-matrix');
+            if (mode !== 'default') document.body.classList.add('theme-' + mode);
+            document.getElementById('hex-accent').value = accent.replace('#', '');
+            document.getElementById('norm-separator').value = state.norm.separator;
+            document.getElementById('norm-example').innerText = "1" + state.norm.separator + " Item Content";
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                const isActive = btn.dataset.mode === mode;
+                btn.style.backgroundColor = isActive ? accent : 'transparent';
+                btn.style.color = isActive ? 'white' : 'inherit';
+                btn.style.borderColor = isActive ? accent : 'var(--border-color)';
+            });
+            document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s.getAttribute('data-color').toLowerCase() === accent.toLowerCase()));
+            render();
+        }
+
+        function saveToStorage() {
+            localStorage.setItem(STORAGE_KEY_TABS, JSON.stringify(state.tabs));
+            localStorage.setItem(STORAGE_KEY_ACTIVE, state.activeTabId);
+            localStorage.setItem(STORAGE_KEY_THEME, JSON.stringify({theme: state.theme, norm: state.norm, multiViewIds: state.multiViewIds, multiViewMode: state.multiViewMode}));
+            document.getElementById('save-status').innerText = "Synced " + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        }
+
+        function addTab(title = 'untitled.txt', content = '') {
+            const id = Date.now().toString() + Math.random();
+            state.tabs.push({ id, title, content, manuallyRenamed: title !== 'untitled.txt', showLineNumbers: true, showZebra: true, outlineModeActive: true });
+            state.activeTabId = id; saveToStorage(); render();
+        }
+
+        function closeTab(id) { 
+            if (state.tabs.length > 1) { 
+                state.tabs = state.tabs.filter(t => t.id !== id); state.multiViewIds = state.multiViewIds.filter(mid => mid !== id);
+                if (state.activeTabId === id) state.activeTabId = state.tabs[0].id; 
+                render(); saveToStorage(); 
+            } 
+        }
+
+        function updateContent(id, content, textarea) {
+            const t = state.tabs.find(x => x.id === id); if (!t) return;
+            t.content = content;
+            if (!t.manuallyRenamed) { const first = content.split('\n')[0].trim().replace(/^[#\-\[\]x!!\d\.\s\)]+/, '').substring(0, 30); t.title = (first || 'untitled.txt') + '.txt'; renderTabs(); }
+            saveToStorage();
+        }
+
+        function toggleSettings(open) {
+            const menu = document.getElementById('settings-menu'), overlay = document.getElementById('settings-overlay');
+            if (open) { menu.classList.add('open'); overlay.classList.remove('hidden'); setTimeout(() => overlay.style.opacity = "1", 10); }
+            else { menu.classList.remove('open'); overlay.style.opacity = "0"; setTimeout(() => overlay.classList.add('hidden'), 200); }
+        }
+
+        function init() {
+            const savedTabs = localStorage.getItem(STORAGE_KEY_TABS), savedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE), savedThemeData = localStorage.getItem(STORAGE_KEY_THEME);
+            if (savedTabs) { state.tabs = JSON.parse(savedTabs); state.activeTabId = savedActiveId || state.tabs[0].id; }
+            else { state.tabs = [{ id: '1', title: 'tabForge.txt', content: '1. Welcome to tabForge\n3. This works in multi-view too\n2. Tab borders are now 5px\n\n- Bullets stay simple\n\nTry the sketch-accurate orientation toggle!', manuallyRenamed: false, showLineNumbers: true, showZebra: true, outlineModeActive: true }]; state.activeTabId = '1'; }
+            if (savedThemeData) { const p = JSON.parse(savedThemeData); state.theme = p.theme; state.norm = p.norm; state.multiViewIds = p.multiViewIds || []; state.multiViewMode = p.multiViewMode || 'vert'; }
+            applyTheme(); setupListeners();
+        }
+
+        function setupListeners() {
+            document.getElementById('add-tab-btn').onclick = () => addTab();
+            document.getElementById('import-btn').onclick = () => document.getElementById('file-input').click();
+            document.getElementById('file-input').onchange = (e) => { Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onload = (ev) => addTab(file.name, ev.target.result); r.readAsText(file); }); e.target.value = ''; };
+            document.getElementById('normalize-btn').onclick = () => normalizeSelection();
+            document.getElementById('open-settings-btn').onclick = () => toggleSettings(true);
+            document.getElementById('close-settings-btn').onclick = () => toggleSettings(false);
+            document.getElementById('settings-overlay').onclick = () => toggleSettings(false);
+            
+            document.getElementById('toggle-tab-orientation').onclick = () => {
+                state.theme.orientation = state.theme.orientation === 'horizontal' ? 'vertical' : 'horizontal';
+                render(); saveToStorage();
+            };
+
+            document.getElementById('toggle-view-mode').onclick = () => { const modes = ['vert', 'horiz', 'card']; state.multiViewMode = modes[(modes.indexOf(state.multiViewMode) + 1) % modes.length]; render(); saveToStorage(); };
+            document.querySelectorAll('.mode-btn').forEach(btn => { btn.onclick = () => { state.theme.mode = btn.dataset.mode; applyTheme(); saveToStorage(); }; });
+            document.getElementById('accent-swatches').onclick = (e) => { if (e.target.classList.contains('swatch')) { state.theme.accent = e.target.getAttribute('data-color'); applyTheme(); saveToStorage(); } };
+            document.getElementById('hex-accent').oninput = (e) => { if (/^[0-9A-Fa-f]{6}$/.test(e.target.value)) { state.theme.accent = '#' + e.target.value; applyTheme(); saveToStorage(); } };
+            document.getElementById('norm-separator').oninput = (e) => { state.norm.separator = e.target.value; applyTheme(); saveToStorage(); };
+            document.getElementById('reset-theme-btn').onclick = () => { state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal' }; state.norm = { separator: '.' }; applyTheme(); saveToStorage(); };
+            document.getElementById('toggle-line-numbers').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.showLineNumbers = !t.showLineNumbers; render(); };
+            document.getElementById('toggle-zebra').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.showZebra = !t.showZebra; render(); };
+            document.getElementById('toggle-outline-mode').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.outlineModeActive = !t.outlineModeActive; render(); };
+        }
+
+        function getSymbolInfo(line) {
+            const raw = line.replace(/^\t+/, ''), indent = line.length - raw.length;
+            const bulletMatch = raw.match(/^([\-\*])(\s+)/);
+            const seqMatch = raw.match(/^(\d+|[a-zA-Z]{1}|[IVXLCDMivxlcdm]+)([\.\-\)]?)(\s+)/);
+            if (bulletMatch) return { type: 'bullet', value: bulletMatch[1], fullSymbol: bulletMatch[1], indent, isStart: true, trailingSpace: bulletMatch[2] };
+            if (seqMatch) {
+                const char = seqMatch[1], sep = seqMatch[2], space = seqMatch[3];
+                if (/^\d+$/.test(char)) return { type: 'number', value: parseInt(char), fullSymbol: char + sep, indent, isStart: parseInt(char) === 1, trailingSpace: space };
+                if (ROMAN.includes(char.toUpperCase())) {
+                    const isLower = char === char.toLowerCase(), val = isLower ? ROMAN.map(r=>r.toLowerCase()).indexOf(char)+1 : ROMAN.indexOf(char.toUpperCase())+1;
+                    return { type: isLower ? 'roman-lower' : 'roman', value: val, fullSymbol: char + sep, indent, isStart: val === 1, trailingSpace: space };
+                }
+                if (/^[a-zA-Z]$/.test(char)) {
+                    const isLower = char === char.toLowerCase(), val = char.toLowerCase().charCodeAt(0) - 96;
+                    return { type: isLower ? 'alpha' : 'alpha-upper', value: val, fullSymbol: char + sep, indent, isStart: val === 1, trailingSpace: space };
+                }
+            }
+            return null;
+        }
+
+        function getNextLevelSymbol(info, reverse = false) {
+            const sep = state.norm.separator; if (info.type === 'bullet') return info.value === '-' ? '*' : '-';
+            const idx = HIERARCHY.indexOf(info.type); const nextType = HIERARCHY[(idx + (reverse ? -1 : 1) + HIERARCHY.length) % HIERARCHY.length];
+            if (nextType === 'number') return "1" + sep; if (nextType === 'roman') return "I" + sep; if (nextType === 'roman-lower') return "i" + sep; if (nextType === 'alpha') return "a" + sep; return "A" + sep;
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
