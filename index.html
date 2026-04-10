@@ -143,7 +143,6 @@
         .tabs-vertical .tab-btn { border-width: 5px 0 5px 5px; border-radius: 8px 0 0 8px; margin-right: -1px; width: 100%; margin-bottom: 2px; height: 36px; padding: 0 12px; }
         .tabs-vertical .tab-active { background-color: var(--tab-active-bg) !important; color: var(--tab-active-text) !important; border-color: var(--accent-color) !important; z-index: 10; margin-left: 2px; }
 
-        /* INACTIVE TABS - CLEANER DELINEATION */
         .tab-inactive { 
             color: #94a3b8 !important; 
             background-color: var(--tab-inactive-bg); 
@@ -188,6 +187,18 @@
             font-size: 9px;
             letter-spacing: 0.05em;
         }
+
+        .stat-badge {
+            background: rgba(0,0,0,0.05);
+            padding: 1px 4px;
+            border-radius: 3px;
+            margin-right: 4px;
+            border: 1px solid rgba(0,0,0,0.03);
+        }
+        .theme-dark .stat-badge, .theme-matrix .stat-badge {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.05);
+        }
     </style>
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
@@ -206,11 +217,8 @@
                 <button id="toggle-line-numbers" class="rounded transition-all" title="Line Numbers"><i data-lucide="list-ordered" class="w-4 h-4"></i></button>
                 <button id="toggle-zebra" class="rounded transition-all" title="Zebra Mode"><i data-lucide="rows" class="w-4 h-4"></i></button>
                 
-                <!-- Tab Orientation Toggle (Sketch-Accurate Icon) -->
                 <button id="toggle-tab-orientation" class="rounded transition-all" title="Toggle Tab Orientation">
-                    <svg id="orient-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <!-- Path dynamically set via JS to match sketch -->
-                    </svg>
+                    <svg id="orient-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
                 </button>
 
                 <button id="toggle-outline-mode" class="rounded transition-all" title="Toggle Magic Outline Mode">
@@ -252,12 +260,21 @@
 
     <footer class="text-slate-400 text-[10px] px-3 h-6 flex justify-between items-center shrink-0">
         <div class="flex space-x-4 items-center">
-            <span id="status-filename">untitled.txt</span>
-            <span id="status-lines">Lines: 1</span>
+            <span id="status-filename" class="font-bold text-accent uppercase tracking-widest">untitled.txt</span>
+            <div class="h-3 w-px bg-slate-300 dark:bg-slate-700 mx-1"></div>
+            <div class="flex items-center space-x-3">
+                <span>Lines: <b id="stat-lines" class="text-current">1</b></span>
+                <span>Words: <b id="stat-words" class="text-current">0</b></span>
+                <span>Chars: <b id="stat-chars" class="text-current">0</b></span>
+            </div>
         </div>
         <div class="flex items-center space-x-4">
-            <span id="status-mode" class="text-accent font-bold uppercase tracking-tighter">Editor Active</span>
-            <span class="uppercase">UTF-8</span>
+            <div class="hidden sm:flex items-center opacity-80">
+                <i data-lucide="clock" class="w-3 h-3 mr-1"></i>
+                <span>Est. Read: <b id="stat-time">1m</b></span>
+            </div>
+            <span class="uppercase font-mono">UTF-8</span>
+            <span id="status-mode" class="text-accent font-black uppercase tracking-tighter bg-accent/10 px-1.5 py-0.5 rounded">Editor Active</span>
         </div>
     </footer>
 
@@ -328,9 +345,9 @@
 
         let draggedTabId = null;
 
-        const STORAGE_KEY_TABS = 'tabforge_tabs_v51';
-        const STORAGE_KEY_ACTIVE = 'tabforge_active_v51';
-        const STORAGE_KEY_THEME = 'tabforge_theme_v51';
+        const STORAGE_KEY_TABS = 'tabforge_tabs_v52';
+        const STORAGE_KEY_ACTIVE = 'tabforge_active_v52';
+        const STORAGE_KEY_THEME = 'tabforge_theme_v52';
 
         function numToRoman(n, lower = false) { 
             const val = n > 0 && n <= ROMAN.length ? ROMAN[n - 1] : null;
@@ -424,7 +441,11 @@
             ta.className = "flex-1 w-full resize-none outline-none h-full " + (tab.showZebra ? 'zebra-mode' : '');
             ta.value = tab.content;
             ta.oninput = (e) => updateContent(tab.id, e.target.value, e.target);
-            ta.onclick = () => { if (document.getElementById('settings-menu').classList.contains('open')) toggleSettings(false); };
+            ta.onclick = () => { 
+                if (document.getElementById('settings-menu').classList.contains('open')) toggleSettings(false); 
+                state.activeTabId = tab.id; // Focus tab on click for multi-view stats
+                updateToolbarUI();
+            };
             ta.onkeydown = (e) => {
                 if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' '].includes(e.key) && tab.outlineModeActive) {
                     setTimeout(() => normalizeSelection(true), 10);
@@ -490,6 +511,8 @@
         function updateToolbarUI() {
             const t = state.tabs.find(x => x.id === state.activeTabId);
             if (!t) return;
+            
+            // Standard Toggles
             const toggles = [{id: 'toggle-line-numbers', active: t.showLineNumbers}, {id: 'toggle-zebra', active: t.showZebra}, {id: 'toggle-outline-mode', active: t.outlineModeActive}];
             toggles.forEach(item => {
                 const btn = document.getElementById(item.id);
@@ -499,38 +522,38 @@
                 }
             });
 
+            // Orientation Button Update
             const orientBtn = document.getElementById('toggle-tab-orientation');
             const isVertical = state.theme.orientation === 'vertical';
             const orientIcon = document.getElementById('orient-icon');
-            
             if (isVertical) {
                 orientBtn.classList.add('btn-active');
-                // Icon matching user sketch: Tabs aligned left
-                orientIcon.innerHTML = `
-                    <rect x="10" y="4" width="10" height="16" rx="1" fill="none" stroke="currentColor"/>
-                    <rect x="4" y="6" width="4" height="3" rx="0.5" fill="currentColor"/>
-                    <rect x="4" y="10" width="4" height="3" rx="0.5" fill="currentColor"/>
-                    <rect x="4" y="14" width="4" height="3" rx="0.5" fill="currentColor"/>
-                `;
+                orientIcon.innerHTML = `<rect x="10" y="4" width="10" height="16" rx="1" fill="none" stroke="currentColor"/><rect x="4" y="6" width="4" height="3" rx="0.5" fill="currentColor"/><rect x="4" y="10" width="4" height="3" rx="0.5" fill="currentColor"/><rect x="4" y="14" width="4" height="3" rx="0.5" fill="currentColor"/>`;
             } else {
                 orientBtn.classList.remove('btn-active');
-                // Icon matching user sketch: Tabs aligned top
-                orientIcon.innerHTML = `
-                    <rect x="4" y="10" width="16" height="10" rx="1" fill="none" stroke="currentColor"/>
-                    <rect x="6" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>
-                    <rect x="10" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>
-                    <rect x="14" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>
-                `;
+                orientIcon.innerHTML = `<rect x="4" y="10" width="16" height="10" rx="1" fill="none" stroke="currentColor"/><rect x="6" y="4" width="3" height="4" rx="0.5" fill="currentColor"/><rect x="10" y="4" width="3" height="4" rx="0.5" fill="currentColor"/><rect x="14" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>`;
             }
 
+            // Stats Update
+            const content = t.content;
+            const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+            const chars = content.length;
+            const lines = content.split('\n').length;
+            const readTime = Math.ceil(words / 200) || 1;
+
             document.getElementById('status-filename').innerText = t.title;
-            document.getElementById('status-lines').innerText = "Lines: " + t.content.split('\n').length;
+            document.getElementById('stat-lines').innerText = lines;
+            document.getElementById('stat-words').innerText = words;
+            document.getElementById('stat-chars').innerText = chars;
+            document.getElementById('stat-time').innerText = readTime + "m";
+
             const mvBtn = document.getElementById('toggle-view-mode');
             if (state.multiViewIds.length > 1) {
                 mvBtn.classList.remove('hidden');
                 const icon = state.multiViewMode === 'horiz' ? 'rows' : (state.multiViewMode === 'card' ? 'layout-grid' : 'columns');
                 document.getElementById('view-mode-icon').setAttribute('data-lucide', icon);
             } else mvBtn.classList.add('hidden');
+            
             lucide.createIcons();
         }
 
@@ -598,7 +621,6 @@
             if (mode !== 'default') document.body.classList.add('theme-' + mode);
             document.getElementById('hex-accent').value = accent.replace('#', '');
             document.getElementById('norm-separator').value = state.norm.separator;
-            document.getElementById('norm-example').innerText = "1" + state.norm.separator + " Item Content";
             document.querySelectorAll('.mode-btn').forEach(btn => {
                 const isActive = btn.dataset.mode === mode;
                 btn.style.backgroundColor = isActive ? accent : 'transparent';
@@ -635,18 +657,19 @@
             t.content = content;
             if (!t.manuallyRenamed) { const first = content.split('\n')[0].trim().replace(/^[#\-\[\]x!!\d\.\s\)]+/, '').substring(0, 30); t.title = (first || 'untitled.txt') + '.txt'; renderTabs(); }
             saveToStorage();
+            updateToolbarUI();
         }
 
         function toggleSettings(open) {
             const menu = document.getElementById('settings-menu'), overlay = document.getElementById('settings-overlay');
-            if (open) { menu.classList.add('open'); overlay.classList.remove('hidden'); setTimeout(() => overlay.style.opacity = "1", 10); }
-            else { menu.classList.remove('open'); overlay.style.opacity = "0"; setTimeout(() => overlay.classList.add('hidden'), 200); }
+            if (open) { menu.classList.add('open'); overlay.classList.remove('hidden'); setTimeout(() => { overlay.style.opacity = "1"; }, 10); }
+            else { menu.classList.remove('open'); overlay.style.opacity = "0"; setTimeout(() => { overlay.classList.add('hidden'); }, 200); }
         }
 
         function init() {
             const savedTabs = localStorage.getItem(STORAGE_KEY_TABS), savedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE), savedThemeData = localStorage.getItem(STORAGE_KEY_THEME);
             if (savedTabs) { state.tabs = JSON.parse(savedTabs); state.activeTabId = savedActiveId || state.tabs[0].id; }
-            else { state.tabs = [{ id: '1', title: 'tabForge.txt', content: '1. Welcome to tabForge\n3. This works in multi-view too\n2. Tab borders are now 5px\n\n- Bullets stay simple\n\nTry the sketch-accurate orientation toggle!', manuallyRenamed: false, showLineNumbers: true, showZebra: true, outlineModeActive: true }]; state.activeTabId = '1'; }
+            else { state.tabs = [{ id: '1', title: 'tabForge.txt', content: '1. Welcome to tabForge\n3. This works in multi-view too\n2. Reorder your workspace\n\n- Bullets stay simple\n\nCheck the stats in the footer!', manuallyRenamed: false, showLineNumbers: true, showZebra: true, outlineModeActive: true }]; state.activeTabId = '1'; }
             if (savedThemeData) { const p = JSON.parse(savedThemeData); state.theme = p.theme; state.norm = p.norm; state.multiViewIds = p.multiViewIds || []; state.multiViewMode = p.multiViewMode || 'vert'; }
             applyTheme(); setupListeners();
         }
@@ -659,12 +682,7 @@
             document.getElementById('open-settings-btn').onclick = () => toggleSettings(true);
             document.getElementById('close-settings-btn').onclick = () => toggleSettings(false);
             document.getElementById('settings-overlay').onclick = () => toggleSettings(false);
-            
-            document.getElementById('toggle-tab-orientation').onclick = () => {
-                state.theme.orientation = state.theme.orientation === 'horizontal' ? 'vertical' : 'horizontal';
-                render(); saveToStorage();
-            };
-
+            document.getElementById('toggle-tab-orientation').onclick = () => { state.theme.orientation = state.theme.orientation === 'horizontal' ? 'vertical' : 'horizontal'; render(); saveToStorage(); };
             document.getElementById('toggle-view-mode').onclick = () => { const modes = ['vert', 'horiz', 'card']; state.multiViewMode = modes[(modes.indexOf(state.multiViewMode) + 1) % modes.length]; render(); saveToStorage(); };
             document.querySelectorAll('.mode-btn').forEach(btn => { btn.onclick = () => { state.theme.mode = btn.dataset.mode; applyTheme(); saveToStorage(); }; });
             document.getElementById('accent-swatches').onclick = (e) => { if (e.target.classList.contains('swatch')) { state.theme.accent = e.target.getAttribute('data-color'); applyTheme(); saveToStorage(); } };
@@ -674,26 +692,6 @@
             document.getElementById('toggle-line-numbers').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.showLineNumbers = !t.showLineNumbers; render(); };
             document.getElementById('toggle-zebra').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.showZebra = !t.showZebra; render(); };
             document.getElementById('toggle-outline-mode').onclick = () => { const t = state.tabs.find(x => x.id === state.activeTabId); t.outlineModeActive = !t.outlineModeActive; render(); };
-        }
-
-        function getSymbolInfo(line) {
-            const raw = line.replace(/^\t+/, ''), indent = line.length - raw.length;
-            const bulletMatch = raw.match(/^([\-\*])(\s+)/);
-            const seqMatch = raw.match(/^(\d+|[a-zA-Z]{1}|[IVXLCDMivxlcdm]+)([\.\-\)]?)(\s+)/);
-            if (bulletMatch) return { type: 'bullet', value: bulletMatch[1], fullSymbol: bulletMatch[1], indent, isStart: true, trailingSpace: bulletMatch[2] };
-            if (seqMatch) {
-                const char = seqMatch[1], sep = seqMatch[2], space = seqMatch[3];
-                if (/^\d+$/.test(char)) return { type: 'number', value: parseInt(char), fullSymbol: char + sep, indent, isStart: parseInt(char) === 1, trailingSpace: space };
-                if (ROMAN.includes(char.toUpperCase())) {
-                    const isLower = char === char.toLowerCase(), val = isLower ? ROMAN.map(r=>r.toLowerCase()).indexOf(char)+1 : ROMAN.indexOf(char.toUpperCase())+1;
-                    return { type: isLower ? 'roman-lower' : 'roman', value: val, fullSymbol: char + sep, indent, isStart: val === 1, trailingSpace: space };
-                }
-                if (/^[a-zA-Z]$/.test(char)) {
-                    const isLower = char === char.toLowerCase(), val = char.toLowerCase().charCodeAt(0) - 96;
-                    return { type: isLower ? 'alpha' : 'alpha-upper', value: val, fullSymbol: char + sep, indent, isStart: val === 1, trailingSpace: space };
-                }
-            }
-            return null;
         }
 
         function getNextLevelSymbol(info, reverse = false) {
