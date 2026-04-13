@@ -101,6 +101,10 @@
                         <rect x="5" y="16" width="14" height="4" rx="1"/>
                     </svg>
                 </button>
+                <!-- WORD WRAP ICON -->
+                <button id="toggle-word-wrap" class="stable-btn transition-all" title="Word Wrap">
+                    <i data-lucide="text-wrap" class="w-[18px] h-[18px]"></i>
+                </button>
                 <!-- MAGIC OUTLINE ICON -->
                 <button id="toggle-outline-mode" class="stable-btn transition-all" title="Toggle Magic Outline Mode">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -118,12 +122,19 @@
                 <button id="toggle-tab-orientation" class="stable-btn transition-all" title="Toggle Tab Orientation">
                     <svg id="orient-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
                 </button>
+                <!-- VIEW MODE ICON -->
+                <button id="toggle-view-mode" class="stable-btn text-accent transition-colors hidden" title="Cycle View Layout">
+                    <svg id="view-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+                </button>
                 <div class="h-4 w-px bg-white/20 mx-1"></div>
                 <!-- FIND ICON -->
                 <button id="open-find-btn" class="stable-btn hover:bg-white/10" title="Find"><i data-lucide="search" class="w-[18px] h-[18px]"></i></button>
                 <div id="find-bar" class="hidden items-center gap-2 text-xs ml-1 min-w-0 flex-1">
                     <input id="find-input" type="text" class="min-w-[180px] flex-1 bg-white/90 text-slate-900 border border-slate-300 rounded px-2 py-1 outline-none" placeholder="Find in current tab">
+                    <input id="replace-input" type="text" class="min-w-[180px] flex-1 bg-white/90 text-slate-900 border border-slate-300 rounded px-2 py-1 outline-none" placeholder="Replace">
                     <button id="find-next-btn" class="stable-btn hover:bg-white/10" title="Find Next"><i data-lucide="arrow-down" class="w-[18px] h-[18px]"></i></button>
+                    <button id="replace-btn" class="stable-btn hover:bg-white/10" title="Replace Current"><i data-lucide="replace" class="w-[18px] h-[18px]"></i></button>
+                    <button id="replace-all-btn" class="stable-btn hover:bg-white/10" title="Replace All"><i data-lucide="replace-all" class="w-[18px] h-[18px]"></i></button>
                     <label class="flex items-center gap-1 whitespace-nowrap text-[11px]">
                         <input id="find-fuzzy-toggle" type="checkbox" class="w-3.5 h-3.5">
                         <span>Fuzzy</span>
@@ -134,10 +145,6 @@
                         <span id="find-other-tabs">0:other</span>
                     </div>
                 </div>
-                <!-- VIEW MODE ICON -->
-                <button id="toggle-view-mode" class="stable-btn text-accent transition-colors hidden" title="Cycle View Layout">
-                    <i id="view-mode-icon" data-lucide="columns" class="w-4 h-4"></i>
-                </button>
             </div>
         </div>
         <div class="flex items-center space-x-3">
@@ -249,6 +256,9 @@
         </div>
     </aside>
 
+    <script src="./tab-model.js"></script>
+    <script src="./persistence.js"></script>
+    <script src="./commands.js"></script>
     <script src="./app.js"></script>
 </body>
 </html>

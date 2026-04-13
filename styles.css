@@ -119,10 +119,18 @@
             color: var(--editor-text);
         }
 
+        .editor-cell.word-wrap-enabled {
+            overflow-x: hidden;
+        }
+
         .outline-row {
             display: flex;
             min-height: var(--editor-lh);
             align-items: stretch;
+        }
+
+        .outline-row.zebra-row-alt {
+            background: var(--editor-stripe);
         }
 
         .outline-row.row-selected {
@@ -238,10 +246,17 @@
             flex: 1;
             min-width: 0;
             white-space: pre;
+            overflow-wrap: normal;
+            word-break: normal;
             outline: none;
             padding-right: var(--text-indent);
             caret-color: var(--accent-color);
             background: transparent;
+        }
+
+        .editor-cell.word-wrap-enabled .outline-line {
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
         }
 
         .outline-line.drag-ready {

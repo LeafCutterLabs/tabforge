@@ -13,6 +13,9 @@
             'roman-paren': '(I)'
         };
         const OUTLINE_LABEL_TO_STYLE = Object.fromEntries(Object.entries(OUTLINE_STYLE_LABELS).map(([key, value]) => [value.toLowerCase(), key]));
+        const { createTabRecord, hydrateTabRecord, duplicateTabRecord } = window.TabForgeTabModel;
+        const { getStorageKeys, safeParseJSON, normalizeThemePayload, serializeStatePayload } = window.TabForgePersistence;
+        const { createTabState, duplicateTabState, closeTabState } = window.TabForgeCommands;
 
         let state = {
             tabs: [],
@@ -29,26 +32,117 @@
             pendingCaret: null,
             preserveSelectionOnFocus: false,
             hoveredLineKey: null,
-            search: { open: false, query: '', fuzzy: false, results: [], currentIndex: -1 },
+            search: { open: false, query: '', replace: '', fuzzy: false, results: [], currentIndex: -1 },
             theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false },
             norm: { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] }
         };
 
         let draggedTabId = null;
         const historyByTab = {};
+        const globalActionHistory = { undo: [], redo: [] };
+        const typingHistoryByTab = {};
         const lineCache = new Map();
+        const structureCache = new Map();
         const visibleStateCache = new Map();
         const searchResultsCache = new Map();
+        const domRefs = {};
         let suppressHistory = false;
         let saveTimer = null;
         let renderFrame = null;
         let pendingRender = { layout: false, tabs: false, editor: false, toolbar: false, find: false };
         const TAB_RENAME_HOVER_MS = 800;
         const SAVE_DEBOUNCE_MS = 120;
+        const MAX_CACHE_ENTRIES = 300;
+        const TYPING_HISTORY_COALESCE_MS = 900;
+        const DEBUG_INVARIANTS = false;
 
-        const STORAGE_KEY_TABS = 'tabforge_tabs_v54';
-        const STORAGE_KEY_ACTIVE = 'tabforge_active_v54';
-        const STORAGE_KEY_THEME = 'tabforge_theme_v54';
+        const STORAGE_KEYS = getStorageKeys(54);
+        const STORAGE_KEY_TABS = STORAGE_KEYS.tabs;
+        const STORAGE_KEY_ACTIVE = STORAGE_KEYS.active;
+        const STORAGE_KEY_THEME = STORAGE_KEYS.theme;
+        const STORAGE_KEY_RECOVERY = STORAGE_KEYS.recovery;
+
+        function setCachedValue(map, key, value) {
+            if (map.has(key)) map.delete(key);
+            map.set(key, value);
+            if (map.size > MAX_CACHE_ENTRIES) {
+                const oldestKey = map.keys().next().value;
+                if (oldestKey !== undefined) map.delete(oldestKey);
+            }
+            return value;
+        }
+
+        function debugInvariant(message, details = null) {
+            if (!DEBUG_INVARIANTS) return;
+            console.warn(`[tabForge invariant] ${message}`, details ?? '');
+        }
+
+        function getCachePrefix(key) {
+            return String(key).split('::', 1)[0];
+        }
+
+        function matchesTabCacheKey(key, tabId) {
+            const prefix = getCachePrefix(key);
+            return prefix === tabId || prefix.startsWith(`${tabId}:`);
+        }
+
+        function cacheDomRefs() {
+            [
+                'app-body',
+                'tabs-container',
+                'editor-container',
+                'find-bar',
+                'find-input',
+                'replace-input',
+                'find-fuzzy-toggle',
+                'find-count',
+                'find-other-tabs',
+                'toggle-line-numbers',
+                'toggle-zebra',
+                'toggle-word-wrap',
+                'toggle-outline-mode',
+                'toggle-tab-orientation',
+                'orient-icon',
+                'status-filename',
+                'stat-lines',
+                'stat-words',
+                'stat-chars',
+                'stat-time',
+                'toggle-view-mode',
+                'view-mode-icon',
+                'undo-btn',
+                'redo-btn',
+                'manual-save-btn',
+                'manual-save-all-btn',
+                'restore-save-btn',
+                'save-status',
+                'open-find-btn',
+                'zip-export-toggle',
+                'hex-accent',
+                'norm-separator',
+                'file-input',
+                'add-tab-btn',
+                'duplicate-tab-btn',
+                'import-btn',
+                'export-tab-btn',
+                'export-all-btn',
+                'find-next-btn',
+                'replace-btn',
+                'replace-all-btn',
+                'open-settings-btn',
+                'close-settings-btn',
+                'settings-overlay',
+                'settings-menu',
+                'toggle-view-mode',
+                'reset-theme-btn',
+                'accent-swatches'
+            ].forEach(id => {
+                domRefs[id] = document.getElementById(id);
+            });
+            domRefs.outlineLevelInputs = Array.from(document.querySelectorAll('.outline-level-input'));
+            domRefs.modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
+            domRefs.swatches = Array.from(document.querySelectorAll('.swatch'));
+        }
 
         function expandRenderFlags(flags = 'full') {
             if (flags === 'full') return { layout: true, tabs: true, editor: true, toolbar: true, find: true };
@@ -66,8 +160,8 @@
         }
 
         function applyLayoutClasses() {
-            const body = document.getElementById('app-body');
-            const tabs = document.getElementById('tabs-container');
+            const body = domRefs['app-body'];
+            const tabs = domRefs['tabs-container'];
             if (!body || !tabs) return;
             if (state.theme.orientation === 'vertical') {
                 body.className = "flex flex-1 overflow-hidden flex-row tabs-vertical";
@@ -79,6 +173,7 @@
         }
 
         function flushRender(flags = pendingRender) {
+            validateStateIntegrity('flushRender');
             if (renderFrame) {
                 cancelAnimationFrame(renderFrame);
                 renderFrame = null;
@@ -86,7 +181,7 @@
             const nextFlags = { ...flags };
             pendingRender = { layout: false, tabs: false, editor: false, toolbar: false, find: false };
             if (nextFlags.layout) applyLayoutClasses();
-            if (nextFlags.editor || nextFlags.tabs || nextFlags.toolbar || nextFlags.find) {
+            if (nextFlags.editor || nextFlags.toolbar || nextFlags.find) {
                 refreshSearchResults({ preserveIndex: true });
             }
             if (nextFlags.tabs) renderTabs();
@@ -116,20 +211,18 @@
             if (render) requestRender(render, { immediate });
         }
 
+        function makeTabId() {
+            return Date.now().toString() + Math.random();
+        }
+
         function createDefaultTab() {
             const content = '1. Welcome to tabForge\n3. Export single or all tabs\n2. Reorder your workspace\n\nCheck stats in the footer!';
-            return {
+            return createTabRecord({
                 id: '1',
                 title: 'tabForge.txt',
                 content,
-                manuallyRenamed: false,
-                showLineNumbers: true,
-                showZebra: true,
-                outlineModeActive: false,
-                collapsedLines: [],
-                manualSavedContent: content,
-                manualSavedAt: Date.now()
-            };
+                manuallyRenamed: false
+            });
         }
 
         function getTabById(id) {
@@ -138,6 +231,57 @@
 
         function getActiveTab() {
             return getTabById(state.activeTabId);
+        }
+
+        function normalizePersistedThemePayload(payload) {
+            return normalizeThemePayload(payload, state.theme, state.norm, DEFAULT_OUTLINE_LEVELS);
+        }
+
+        function validateStateIntegrity(context = 'unknown') {
+            if (!Array.isArray(state.tabs) || state.tabs.length === 0) {
+                debugInvariant(`tabs missing during ${context}, restoring default tab`);
+                state.tabs = [createDefaultTab()];
+            }
+
+            state.tabs = state.tabs.filter(tab => tab && typeof tab.id === 'string');
+            if (!state.tabs.length) state.tabs = [createDefaultTab()];
+
+            if (!getTabById(state.activeTabId)) {
+                debugInvariant(`activeTabId invalid during ${context}, resetting`);
+                state.activeTabId = state.tabs[0].id;
+            }
+
+            state.multiViewIds = (Array.isArray(state.multiViewIds) ? state.multiViewIds : [])
+                .filter(id => getTabById(id))
+                .slice(0, 4);
+
+            const activeTab = getActiveTab();
+            const activeLines = getTabLines(activeTab);
+            state.activeLineIndex = Math.max(0, Math.min(state.activeLineIndex || 0, Math.max(0, activeLines.length - 1)));
+
+            if (state.selectedLineRange) {
+                const selectedTab = getTabById(state.selectedLineRange.tabId);
+                if (!selectedTab) {
+                    debugInvariant(`selectedLineRange tab missing during ${context}, clearing`);
+                    state.selectedLineRange = null;
+                } else {
+                    const selectedLines = getTabLines(selectedTab);
+                    const maxIndex = Math.max(0, selectedLines.length - 1);
+                    state.selectedLineRange = {
+                        tabId: state.selectedLineRange.tabId,
+                        start: Math.max(0, Math.min(state.selectedLineRange.start, maxIndex)),
+                        end: Math.max(0, Math.min(state.selectedLineRange.end, maxIndex))
+                    };
+                    if (state.selectedLineRange.start > state.selectedLineRange.end) {
+                        [state.selectedLineRange.start, state.selectedLineRange.end] = [state.selectedLineRange.end, state.selectedLineRange.start];
+                    }
+                }
+            }
+        }
+
+        function serializePersistenceState() {
+            validateStateIntegrity('serializePersistenceState');
+            return serializeStatePayload(state);
         }
 
         function ensureTxtExtension(title) {
@@ -163,24 +307,15 @@
         }
 
         function duplicateActiveTab() {
-            const source = getActiveTab();
-            if (!source) return;
-            const id = Date.now().toString() + Math.random();
-            const copy = {
-                id,
-                title: appendNewToTitle(source.title),
-                content: source.content,
-                manuallyRenamed: true,
-                showLineNumbers: source.showLineNumbers,
-                showZebra: source.showZebra,
-                outlineModeActive: source.outlineModeActive,
-                collapsedLines: [...(source.collapsedLines || [])],
-                manualSavedContent: source.content,
-                manualSavedAt: Date.now()
-            };
-            const sourceIndex = state.tabs.findIndex(tab => tab.id === source.id);
-            state.tabs.splice(sourceIndex + 1, 0, copy);
-            state.activeTabId = id;
+            const nextState = duplicateTabState({
+                tabs: state.tabs,
+                activeTabId: state.activeTabId,
+                createId: makeTabId,
+                buildTitle: appendNewToTitle
+            });
+            if (!nextState) return;
+            state.tabs = nextState.tabs;
+            state.activeTabId = nextState.activeTabId;
             saveToStorage();
             requestRender('full');
         }
@@ -331,7 +466,7 @@
 
         function getTabLines(tab) {
             if (!tab) return [''];
-            return getCachedLines(tab.content || '', tab.id || 'tab');
+            return getTabStructure(tab).lines;
         }
 
         function getLineDepth(rawLine) {
@@ -483,7 +618,10 @@
 
         function invalidateTabCaches(tabId) {
             for (const key of lineCache.keys()) {
-                if (key.startsWith(`${tabId}::`)) lineCache.delete(key);
+                if (matchesTabCacheKey(key, tabId)) lineCache.delete(key);
+            }
+            for (const key of structureCache.keys()) {
+                if (matchesTabCacheKey(key, tabId)) structureCache.delete(key);
             }
             for (const key of visibleStateCache.keys()) {
                 if (key.startsWith(`${tabId}::`)) visibleStateCache.delete(key);
@@ -501,8 +639,38 @@
             const key = `${cacheKey}::${content}`;
             if (lineCache.has(key)) return lineCache.get(key);
             const lines = String(content).split('\n');
-            lineCache.set(key, lines);
-            return lines;
+            return setCachedValue(lineCache, key, lines);
+        }
+
+        function getCachedStructure(content = '', cacheKey = 'global') {
+            const key = `${cacheKey}::${content}`;
+            if (structureCache.has(key)) return structureCache.get(key);
+
+            const lines = getCachedLines(content, cacheKey);
+            const depths = lines.map(getLineDepth);
+            const subtreeEnds = Array(lines.length).fill(0);
+            const ancestorStack = [];
+
+            for (let index = 0; index < lines.length; index++) {
+                const depth = depths[index];
+                while (ancestorStack.length && depths[ancestorStack[ancestorStack.length - 1]] >= depth) {
+                    subtreeEnds[ancestorStack.pop()] = index - 1;
+                }
+                ancestorStack.push(index);
+            }
+
+            while (ancestorStack.length) {
+                const index = ancestorStack.pop();
+                subtreeEnds[index] = lines.length - 1;
+            }
+
+            const descendantCounts = subtreeEnds.map((endIndex, index) => Math.max(0, endIndex - index));
+            return setCachedValue(structureCache, key, { lines, depths, subtreeEnds, descendantCounts });
+        }
+
+        function getTabStructure(tab) {
+            if (!tab) return getCachedStructure('', 'tab');
+            return getCachedStructure(tab.content || '', tab.id || 'tab');
         }
 
         function getManualSavedContent(tab) {
@@ -599,8 +767,7 @@
                 }
             });
 
-            searchResultsCache.set(cacheKey, results);
-            return results;
+            return setCachedValue(searchResultsCache, cacheKey, results);
         }
 
         function countMatchesInOtherTabs() {
@@ -611,18 +778,29 @@
         }
 
         function syncFindBarUi() {
-            const findBar = document.getElementById('find-bar');
-            const input = document.getElementById('find-input');
-            const fuzzy = document.getElementById('find-fuzzy-toggle');
-            const count = document.getElementById('find-count');
-            const otherTabs = document.getElementById('find-other-tabs');
-            if (!findBar || !input || !fuzzy || !count || !otherTabs) return;
+            const findBar = domRefs['find-bar'];
+            const input = domRefs['find-input'];
+            const replaceInput = domRefs['replace-input'];
+            const fuzzy = domRefs['find-fuzzy-toggle'];
+            const count = domRefs['find-count'];
+            const otherTabs = domRefs['find-other-tabs'];
+            const openFindBtn = domRefs['open-find-btn'];
+            const replaceBtn = domRefs['replace-btn'];
+            const replaceAllBtn = domRefs['replace-all-btn'];
+            if (!findBar || !input || !replaceInput || !fuzzy || !count || !otherTabs || !openFindBtn || !replaceBtn || !replaceAllBtn) return;
             findBar.classList.toggle('hidden', !state.search.open);
             findBar.classList.toggle('flex', state.search.open);
+            openFindBtn.classList.toggle('btn-active', state.search.open);
             input.value = state.search.query;
+            replaceInput.value = state.search.replace;
             fuzzy.checked = state.search.fuzzy;
             fuzzy.disabled = state.search.query.trim().length < 3;
             fuzzy.parentElement.style.opacity = fuzzy.disabled ? '0.5' : '1';
+            const canReplace = !state.search.fuzzy && Boolean(state.search.query.trim()) && state.search.currentIndex !== -1;
+            replaceBtn.disabled = !canReplace;
+            replaceAllBtn.disabled = !(!state.search.fuzzy && Boolean(state.search.query.trim()) && state.search.results.length);
+            replaceBtn.style.opacity = replaceBtn.disabled ? '0.45' : '1';
+            replaceAllBtn.style.opacity = replaceAllBtn.disabled ? '0.45' : '1';
             if (!state.search.query.trim()) {
                 count.textContent = '0 matches';
                 otherTabs.textContent = '0:other';
@@ -654,11 +832,11 @@
         function revealLineInCollapsedSections(tabId, lineIndex) {
             const tab = getTabById(tabId);
             if (!tab || !tab.collapsedLines?.length) return false;
-            const lines = getTabLines(tab);
+            const structure = getTabStructure(tab);
             const ancestorsToOpen = [];
             for (const collapsedIndex of tab.collapsedLines) {
                 if (collapsedIndex >= lineIndex) continue;
-                const endIndex = getSubtreeEndIndex(lines, collapsedIndex);
+                const endIndex = structure.subtreeEnds[collapsedIndex] ?? collapsedIndex;
                 if (lineIndex <= endIndex) ancestorsToOpen.push(collapsedIndex);
             }
             if (!ancestorsToOpen.length) return false;
@@ -688,7 +866,7 @@
             if (!tab) return;
             const expanded = revealLineInCollapsedSections(tab.id, result.lineIndex);
             syncFindBarUi();
-            renderEditorArea();
+            requestRender('editor', { immediate: true });
             requestAnimationFrame(() => {
                 const line = getLineEditor(tab.id, result.lineIndex);
                 if (!line) return;
@@ -706,7 +884,7 @@
             refreshSearchResults({ preserveIndex: true });
             syncFindBarUi();
             requestAnimationFrame(() => {
-                const input = document.getElementById('find-input');
+                const input = domRefs['find-input'];
                 if (!input) return;
                 input.focus();
                 input.select();
@@ -715,9 +893,60 @@
 
         function closeFindBar() {
             state.search.open = false;
-            state.search.currentIndex = state.search.results.length ? state.search.currentIndex : -1;
+            state.search.query = '';
+            state.search.replace = '';
+            state.search.fuzzy = false;
+            state.search.results = [];
+            state.search.currentIndex = -1;
+            invalidateSearchCache();
             syncFindBarUi();
-            renderEditorArea();
+            requestRender('editor');
+        }
+
+        function replaceCurrentSearchResult() {
+            const tab = getActiveTab();
+            if (!tab || state.search.fuzzy || state.search.currentIndex === -1) return;
+            const result = state.search.results[state.search.currentIndex];
+            if (!result) return;
+            const currentLines = [...getTabLines(tab)];
+            const rawLine = currentLines[result.lineIndex];
+            const leadingTabs = (rawLine.match(/^\t*/) || [''])[0];
+            const rawStart = leadingTabs.length + result.start;
+            const rawEnd = leadingTabs.length + result.end;
+            currentLines[result.lineIndex] = rawLine.slice(0, rawStart) + state.search.replace + rawLine.slice(rawEnd);
+            const nextIndex = state.search.currentIndex;
+            updateTabLines(tab.id, currentLines, result.lineIndex, result.start + state.search.replace.length);
+            requestAnimationFrame(() => {
+                refreshSearchResults();
+                if (state.search.results.length) goToSearchResult(Math.min(nextIndex, state.search.results.length - 1));
+            });
+        }
+
+        function replaceAllSearchResults() {
+            const tab = getActiveTab();
+            if (!tab || state.search.fuzzy || !state.search.results.length) return;
+            const currentLines = [...getTabLines(tab)];
+            const groupedByLine = new Map();
+            state.search.results.forEach(result => {
+                if (!groupedByLine.has(result.lineIndex)) groupedByLine.set(result.lineIndex, []);
+                groupedByLine.get(result.lineIndex).push(result);
+            });
+
+            [...groupedByLine.entries()].forEach(([lineIndex, results]) => {
+                const rawLine = currentLines[lineIndex];
+                const leadingTabs = (rawLine.match(/^\t*/) || [''])[0];
+                let nextLine = rawLine;
+                [...results].sort((a, b) => b.start - a.start).forEach(result => {
+                    const rawStart = leadingTabs.length + result.start;
+                    const rawEnd = leadingTabs.length + result.end;
+                    nextLine = nextLine.slice(0, rawStart) + state.search.replace + nextLine.slice(rawEnd);
+                });
+                currentLines[lineIndex] = nextLine;
+            });
+
+            const firstLineIndex = state.search.results[0].lineIndex;
+            updateTabLines(tab.id, currentLines, firstLineIndex, 0);
+            requestAnimationFrame(() => refreshSearchResults());
         }
 
         function markManualSave(tabId = state.activeTabId) {
@@ -756,6 +985,21 @@
             return historyByTab[tabId];
         }
 
+        function recordGlobalAction(action) {
+            if (!action || suppressHistory) return;
+            globalActionHistory.undo.push(action);
+            if (globalActionHistory.undo.length > 200) globalActionHistory.undo.shift();
+            globalActionHistory.redo = [];
+        }
+
+        function canUndo() {
+            return globalActionHistory.undo.length > 0;
+        }
+
+        function canRedo() {
+            return globalActionHistory.redo.length > 0;
+        }
+
         function snapshotTabState(tabId) {
             const tab = getTabById(tabId);
             if (!tab) return null;
@@ -773,17 +1017,28 @@
                 && a.activeLineIndex === b.activeLineIndex;
         }
 
-        function recordTabHistory(tabId, snapshot = snapshotTabState(tabId)) {
+        function recordTabHistory(tabId, snapshot = snapshotTabState(tabId), options = {}) {
             if (suppressHistory || !snapshot) return;
             const history = ensureTabHistory(tabId);
             const last = history.undo[history.undo.length - 1];
             if (sameTabSnapshot(last, snapshot)) return;
+            const now = Date.now();
+            const typingState = typingHistoryByTab[tabId];
+            if (options.coalesceTyping && typingState && (now - typingState.at) <= TYPING_HISTORY_COALESCE_MS) {
+                history.redo = [];
+                globalActionHistory.redo = [];
+                typingState.at = now;
+                return;
+            }
             history.undo.push(snapshot);
             if (history.undo.length > 100) history.undo.shift();
             history.redo = [];
+            recordGlobalAction({ type: 'tab-edit', tabId });
+            if (options.coalesceTyping) typingHistoryByTab[tabId] = { at: now };
+            else delete typingHistoryByTab[tabId];
         }
 
-        function restoreTabHistory(tabId, direction) {
+        function restoreTabHistory(tabId, direction, options = {}) {
             const tab = getTabById(tabId);
             if (!tab) return;
             const history = ensureTabHistory(tabId);
@@ -801,8 +1056,8 @@
             state.activeTabId = tabId;
             state.activeLineIndex = target.activeLineIndex;
             updateContent(tabId, tab.content);
-            renderEditorArea();
             saveToStorage();
+            requestRender('editor', { immediate: true });
             suppressHistory = false;
 
             requestAnimationFrame(() => {
@@ -811,23 +1066,86 @@
                 line.focus({ preventScroll: true });
                 placeCaret(line, line.textContent.length);
             });
+
+            if (!options.fromGlobal) {
+                const action = { type: 'tab-edit', tabId };
+                if (direction === 'undo') globalActionHistory.redo.push(action);
+                else globalActionHistory.undo.push(action);
+            }
+        }
+
+        function restoreClosedTab(action) {
+            if (!action?.tabSnapshot) return;
+            const exists = getTabById(action.tabSnapshot.id);
+            if (exists) return;
+            const insertIndex = Math.max(0, Math.min(action.index, state.tabs.length));
+            state.tabs.splice(insertIndex, 0, {
+                ...action.tabSnapshot,
+                collapsedLines: [...(action.tabSnapshot.collapsedLines || [])]
+            });
+            state.multiViewIds = Array.isArray(action.multiViewIdsBefore)
+                ? action.multiViewIdsBefore.filter(id => getTabById(id))
+                : state.multiViewIds;
+            state.activeTabId = action.activeTabIdBefore && getTabById(action.activeTabIdBefore)
+                ? action.activeTabIdBefore
+                : action.tabSnapshot.id;
+            saveToStorage();
+            requestRender('full', { immediate: true });
+        }
+
+        function recloseTabFromAction(action) {
+            if (!action?.tabSnapshot) return;
+            const tabExists = getTabById(action.tabSnapshot.id);
+            if (!tabExists || state.tabs.length <= 1) return;
+            state.tabs = state.tabs.filter(t => t.id !== action.tabSnapshot.id);
+            state.multiViewIds = state.multiViewIds.filter(id => id !== action.tabSnapshot.id);
+            if (state.activeTabId === action.tabSnapshot.id) {
+                state.activeTabId = state.tabs[Math.max(0, Math.min(action.index, state.tabs.length - 1))]?.id || state.tabs[0].id;
+            }
+            saveToStorage();
+            requestRender('full', { immediate: true });
+        }
+
+        function performUndo() {
+            const action = globalActionHistory.undo.pop();
+            if (!action) return;
+            if (action.type === 'close-tab') {
+                restoreClosedTab(action);
+                globalActionHistory.redo.push(action);
+                return;
+            }
+            restoreTabHistory(action.tabId, 'undo', { fromGlobal: true });
+            globalActionHistory.redo.push(action);
+        }
+
+        function performRedo() {
+            const action = globalActionHistory.redo.pop();
+            if (!action) return;
+            if (action.type === 'close-tab') {
+                recloseTabFromAction(action);
+                globalActionHistory.undo.push(action);
+                return;
+            }
+            restoreTabHistory(action.tabId, 'redo', { fromGlobal: true });
+            globalActionHistory.undo.push(action);
         }
 
         function getVisibleLineState(tab) {
             const cacheKey = getVisibleStateCacheKey(tab);
             if (visibleStateCache.has(cacheKey)) return visibleStateCache.get(cacheKey);
-            const lines = getTabLines(tab);
+            const structure = getTabStructure(tab);
+            const { lines, depths, descendantCounts } = structure;
             const collapsed = getCollapsedLineSet(tab);
             const visible = [];
             let hiddenDepth = null;
 
             for (let i = 0; i < lines.length; i++) {
-                const depth = getLineDepth(lines[i]);
+                const depth = depths[i];
                 const attention = getAttentionType(lines[i]);
                 if (hiddenDepth !== null && depth > hiddenDepth && !attention) continue;
                 if (hiddenDepth !== null && depth <= hiddenDepth) hiddenDepth = null;
 
-                const descendantCount = getDescendantCount(lines, i);
+                const descendantCount = descendantCounts[i];
                 const isCollapsed = collapsed.has(i) && descendantCount >= 3;
                 visible.push({
                     index: i,
@@ -844,8 +1162,7 @@
             }
 
             const result = { lines, visible };
-            visibleStateCache.set(cacheKey, result);
-            return result;
+            return setCachedValue(visibleStateCache, cacheKey, result);
         }
 
         function updateTabLines(tabId, lines, focusLineIndex = state.activeLineIndex, caretOffset = 0) {
@@ -860,11 +1177,12 @@
                 offset: Math.max(0, caretOffset)
             };
             updateContent(tabId, tab.content);
-            renderEditorArea();
+            requestRender('editor', { immediate: true });
             requestAnimationFrame(() => {
                 const line = getLineEditor(tabId, state.activeLineIndex);
                 if (!line) return;
                 line.focus({ preventScroll: true });
+                line.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             });
         }
 
@@ -878,7 +1196,7 @@
             tab.collapsedLines = [...set].sort((a, b) => a - b);
             invalidateTabCaches(tabId);
             saveToStorage();
-            renderEditorArea();
+            requestRender('editor', { immediate: true });
         }
 
         function setSelectedLineRange(tabId, start, end) {
@@ -922,8 +1240,8 @@
                 return { start: selectedRange.start, end: selectedRange.end };
             }
             const tab = getTabById(tabId);
-            const lines = getTabLines(tab);
-            return { start: lineIndex, end: getSubtreeEndIndex(lines, lineIndex) };
+            const structure = getTabStructure(tab);
+            return { start: lineIndex, end: structure.subtreeEnds[lineIndex] ?? lineIndex };
         }
 
         function moveLineBlockWithState(lines, collapsedLines, start, end, targetIndex) {
@@ -959,7 +1277,7 @@
                 position: 'after'
             };
             clearSelectedLineRange();
-            renderEditorArea();
+            requestRender('editor', { immediate: true });
         }
 
         function updateLineDragMoveTarget(tabId, hoverIndex, position) {
@@ -967,7 +1285,7 @@
             state.dragMove.hoverIndex = hoverIndex;
             state.dragMove.position = position;
             state.dragMove.targetIndex = position === 'before' ? hoverIndex : hoverIndex + 1;
-            renderEditorArea();
+            requestRender('editor', { immediate: true });
         }
 
         function finishLineDragMove() {
@@ -981,7 +1299,7 @@
             const currentCollapsed = [...(tab.collapsedLines || [])];
             const moved = moveLineBlockWithState(currentLines, currentCollapsed, start, end, targetIndex);
             if (moved.lines === currentLines) {
-                renderEditorArea();
+                requestRender('editor', { immediate: true });
                 return;
             }
 
@@ -1034,12 +1352,12 @@
             if (!(e.ctrlKey || e.metaKey)) return;
             if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
                 e.preventDefault();
-                restoreTabHistory(state.activeTabId, 'undo');
+                performUndo();
                 return;
             }
             if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
                 e.preventDefault();
-                restoreTabHistory(state.activeTabId, 'redo');
+                performRedo();
             }
         }
 
@@ -1054,6 +1372,17 @@
             if (isMod && e.key.toLowerCase() === 'f') {
                 e.preventDefault();
                 openFindBar();
+                return;
+            }
+            if (isMod && e.key.toLowerCase() === 'h') {
+                e.preventDefault();
+                openFindBar();
+                requestAnimationFrame(() => {
+                    const replaceInput = domRefs['replace-input'];
+                    if (!replaceInput) return;
+                    replaceInput.focus();
+                    replaceInput.select();
+                });
                 return;
             }
             if (e.key === 'F3') {
@@ -1146,18 +1475,7 @@
 
             const hydrated = savedTabs
                 .filter(tab => tab && typeof tab === 'object')
-                .map((tab, index) => ({
-                    id: typeof tab.id === 'string' && tab.id ? tab.id : String(Date.now() + index),
-                    title: typeof tab.title === 'string' && tab.title ? tab.title : 'untitled.txt',
-                    content: typeof tab.content === 'string' ? tab.content : '',
-                    manuallyRenamed: Boolean(tab.manuallyRenamed),
-                    showLineNumbers: tab.showLineNumbers !== false,
-                    showZebra: tab.showZebra !== false,
-                    outlineModeActive: tab.outlineModeActive !== false,
-                    collapsedLines: Array.isArray(tab.collapsedLines) ? tab.collapsedLines.filter(Number.isInteger) : [],
-                    manualSavedContent: typeof tab.manualSavedContent === 'string' ? tab.manualSavedContent : (typeof tab.content === 'string' ? tab.content : ''),
-                    manualSavedAt: typeof tab.manualSavedAt === 'number' ? tab.manualSavedAt : Date.now()
-                }));
+                .map((tab, index) => hydrateTabRecord(tab, String(Date.now() + index)));
 
             return hydrated.length ? hydrated : [createDefaultTab()];
         }
@@ -1172,7 +1490,7 @@
         }
 
         function renderTabs() {
-            const container = document.getElementById('tabs-container');
+            const container = domRefs['tabs-container'];
             if (!container) return;
             container.innerHTML = '';
             state.tabs.forEach((tab) => {
@@ -1244,6 +1562,31 @@
             lucide.createIcons();
         }
 
+        function setViewModeIcon(mode) {
+            const icon = domRefs['view-mode-icon'];
+            if (!icon) return;
+            if (mode === 'horiz') {
+                icon.innerHTML = `
+                    <rect x="5" y="4" width="14" height="7" rx="1"></rect>
+                    <rect x="5" y="13" width="14" height="7" rx="1"></rect>
+                `;
+                return;
+            }
+            if (mode === 'card') {
+                icon.innerHTML = `
+                    <rect x="4" y="4" width="7" height="7" rx="1"></rect>
+                    <rect x="13" y="4" width="7" height="7" rx="1"></rect>
+                    <rect x="4" y="13" width="7" height="7" rx="1"></rect>
+                    <rect x="13" y="13" width="7" height="7" rx="1"></rect>
+                `;
+                return;
+            }
+            icon.innerHTML = `
+                <rect x="4" y="5" width="7" height="14" rx="1"></rect>
+                <rect x="13" y="5" width="7" height="14" rx="1"></rect>
+            `;
+        }
+
         function toggleMultiView(id) {
             const idx = state.multiViewIds.indexOf(id);
             if (idx !== -1) state.multiViewIds.splice(idx, 1);
@@ -1255,14 +1598,16 @@
         function createEditorElement(tab) {
             const wrap = document.createElement('div');
             wrap.className = "flex-1 overflow-auto relative h-full editor-cell";
+            if (tab.showWordWrap) wrap.classList.add('word-wrap-enabled');
             const root = document.createElement('div');
-            root.className = "outline-root h-full " + (tab.showZebra ? 'zebra-mode' : '');
+            root.className = "outline-root h-full " + (tab.showZebra && !tab.showWordWrap ? 'zebra-mode' : '');
             const { lines, visible } = getVisibleLineState(tab);
             const savedLines = getManualSavedLines(tab);
 
             visible.forEach((node, visibleIndex) => {
                 const row = document.createElement('div');
                 row.className = "outline-row" + (node.isCollapsed ? " collapsed-parent" : "");
+                if (tab.showZebra && tab.showWordWrap && visibleIndex % 2 === 1) row.classList.add('zebra-row-alt');
                 row.dataset.rowIndex = String(node.index);
                 row.dataset.tabId = tab.id;
                 const selectedRange = state.selectedLineRange && state.selectedLineRange.tabId === tab.id ? state.selectedLineRange : null;
@@ -1284,7 +1629,6 @@
                     if (node.showToggle) {
                         const toggle = document.createElement('span');
                         toggle.className = 'outline-toggle';
-                        toggle.textContent = node.isCollapsed ? '+' : 'âˆ’';
                         toggle.textContent = node.isCollapsed ? '+' : '-';
                         toggle.onclick = (e) => {
                             e.stopPropagation();
@@ -1301,7 +1645,7 @@
 
                 const line = document.createElement('div');
                 line.contentEditable = "true";
-                line.spellcheck = false;
+                line.spellcheck = true;
                 line.dataset.tabLine = `${tab.id}:${node.index}`;
                 line.dataset.lineIndex = String(node.index);
                 line.className = "outline-line" + (node.text ? "" : " empty");
@@ -1379,7 +1723,7 @@
                     if (!state.dragSelecting.moved && state.dragSelecting.anchor === node.index) return;
                     state.dragSelecting.moved = true;
                     setSelectedLineRange(tab.id, state.dragSelecting.anchor, node.index);
-                    renderEditorArea();
+                    requestRender('editor', { immediate: true });
                 };
 
                 row.onmousemove = (e) => {
@@ -1399,7 +1743,7 @@
                     const nextLines = [...getTabLines(getTabById(tab.id))];
                     nextLines[node.index] = "\t".repeat(node.depth) + sanitizedText;
                     e.currentTarget.classList.toggle('empty', !sanitizedText);
-                    updateContent(tab.id, nextLines.join('\n'));
+                    updateContent(tab.id, nextLines.join('\n'), null, { coalesceTyping: true });
                 };
 
                 line.onpaste = (e) => {
@@ -1500,7 +1844,7 @@
                                 const anchor = node.index === existingRange.start ? existingRange.end : existingRange.start;
                                 setSelectedLineRange(tab.id, anchor, target.index);
                                 state.preserveSelectionOnFocus = true;
-                                renderEditorArea();
+                                requestRender('editor', { immediate: true });
                             } else {
                                 clearSelectedLineRange();
                             }
@@ -1569,7 +1913,7 @@
         }
 
         function renderEditorArea() {
-            const container = document.getElementById('editor-container');
+            const container = domRefs['editor-container'];
             if (!container) return;
             container.innerHTML = '';
             if (state.multiViewIds.length > 1) {
@@ -1612,20 +1956,21 @@
             const toggles = [
                 {id: 'toggle-line-numbers', active: t.showLineNumbers}, 
                 {id: 'toggle-zebra', active: t.showZebra}, 
+                {id: 'toggle-word-wrap', active: t.showWordWrap},
                 {id: 'toggle-outline-mode', active: t.outlineModeActive}
             ];
             
             toggles.forEach(item => {
-                const btn = document.getElementById(item.id);
+                const btn = domRefs[item.id];
                 if (btn) {
                     if (item.active) btn.classList.add('btn-active');
                     else btn.classList.remove('btn-active');
                 }
             });
 
-            const orientBtn = document.getElementById('toggle-tab-orientation');
+            const orientBtn = domRefs['toggle-tab-orientation'];
             const isVertical = state.theme.orientation === 'vertical';
-            const orientIcon = document.getElementById('orient-icon');
+            const orientIcon = domRefs['orient-icon'];
             if (isVertical) {
                 orientBtn.classList.add('btn-active');
                 orientIcon.innerHTML = `<rect x="10" y="4" width="10" height="16" rx="1" fill="none" stroke="currentColor"/><rect x="4" y="6" width="4" height="3" rx="0.5" fill="currentColor"/><rect x="4" y="10" width="4" height="3" rx="0.5" fill="currentColor"/><rect x="4" y="14" width="4" height="3" rx="0.5" fill="currentColor"/>`;
@@ -1641,38 +1986,36 @@
             const lines = getCachedLines(content, `${t.id}:stats`).length;
             const readTime = Math.ceil(words / 200) || 1;
 
-            document.getElementById('status-filename').innerText = t.title;
-            document.getElementById('stat-lines').innerText = lines;
-            document.getElementById('stat-words').innerText = words;
-            document.getElementById('stat-chars').innerText = chars;
-            document.getElementById('stat-time').innerText = readTime + "m";
+            domRefs['status-filename'].innerText = t.title;
+            domRefs['stat-lines'].innerText = lines;
+            domRefs['stat-words'].innerText = words;
+            domRefs['stat-chars'].innerText = chars;
+            domRefs['stat-time'].innerText = readTime + "m";
 
-            const mvBtn = document.getElementById('toggle-view-mode');
+            const mvBtn = domRefs['toggle-view-mode'];
             if (state.multiViewIds.length > 1) {
                 mvBtn.classList.remove('hidden');
-                const icon = state.multiViewMode === 'horiz' ? 'rows' : (state.multiViewMode === 'card' ? 'layout-grid' : 'columns');
-                document.getElementById('view-mode-icon').setAttribute('data-lucide', icon);
+                setViewModeIcon(state.multiViewMode);
             } else mvBtn.classList.add('hidden');
 
-            const history = ensureTabHistory(t.id);
-            document.getElementById('undo-btn').disabled = history.undo.length === 0;
-            document.getElementById('redo-btn').disabled = history.redo.length === 0;
-            document.getElementById('manual-save-btn').title = isTabDirty(t)
+            domRefs['undo-btn'].disabled = !canUndo();
+            domRefs['redo-btn'].disabled = !canRedo();
+            domRefs['manual-save-btn'].title = isTabDirty(t)
                 ? `Save (last saved ${formatManualSaveTime(t.manualSavedAt)})`
                 : `Saved ${formatManualSaveTime(t.manualSavedAt)}`;
-            document.getElementById('manual-save-all-btn').title = areAnyTabsDirty()
+            domRefs['manual-save-all-btn'].title = areAnyTabsDirty()
                 ? 'Save All'
                 : 'All Tabs Saved';
-            document.getElementById('restore-save-btn').disabled = !isTabDirty(t);
-            document.getElementById('restore-save-btn').title = isTabDirty(t)
+            domRefs['restore-save-btn'].disabled = !isTabDirty(t);
+            domRefs['restore-save-btn'].title = isTabDirty(t)
                 ? `Jump Back To Last Save (${formatManualSaveTime(t.manualSavedAt)})`
                 : 'Already At Last Save';
-            document.getElementById('save-status').innerText = isTabDirty(t)
+            domRefs['save-status'].innerText = isTabDirty(t)
                 ? 'Autosaved · Revision pending'
                 : `Revision saved ${formatManualSaveTime(t.manualSavedAt)}`;
-            document.getElementById('open-find-btn').classList.toggle('btn-active', state.search.open);
+            domRefs['open-find-btn'].classList.toggle('btn-active', state.search.open);
 
-            document.getElementById('zip-export-toggle').checked = state.theme.zipExport;
+            domRefs['zip-export-toggle'].checked = state.theme.zipExport;
             
             lucide.createIcons();
         }
@@ -1953,18 +2296,18 @@
             root.style.setProperty('--accent-color', accent);
             document.body.classList.remove('theme-light', 'theme-dark', 'theme-matrix');
             if (mode !== 'default') document.body.classList.add('theme-' + mode);
-            document.getElementById('hex-accent').value = accent.replace('#', '');
-            document.getElementById('norm-separator').value = state.norm.separator;
-            document.querySelectorAll('.outline-level-input').forEach((input, index) => {
+            domRefs['hex-accent'].value = accent.replace('#', '');
+            domRefs['norm-separator'].value = state.norm.separator;
+            domRefs.outlineLevelInputs.forEach((input, index) => {
                 input.value = getOutlineStyleLabel(getOutlineLevels()[index] || DEFAULT_OUTLINE_LEVELS[index]);
             });
-            document.querySelectorAll('.mode-btn').forEach(btn => {
+            domRefs.modeButtons.forEach(btn => {
                 const isActive = btn.dataset.mode === mode;
                 btn.style.backgroundColor = isActive ? accent : 'transparent';
                 btn.style.color = isActive ? 'white' : 'inherit';
                 btn.style.borderColor = isActive ? accent : 'var(--border-color)';
             });
-            document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s.getAttribute('data-color').toLowerCase() === accent.toLowerCase()));
+            domRefs.swatches.forEach(s => s.classList.toggle('active', s.getAttribute('data-color').toLowerCase() === accent.toLowerCase()));
             requestRender('full');
         }
 
@@ -1973,10 +2316,15 @@
                 clearTimeout(saveTimer);
                 saveTimer = null;
             }
-            localStorage.setItem(STORAGE_KEY_TABS, JSON.stringify(state.tabs));
-            localStorage.setItem(STORAGE_KEY_ACTIVE, state.activeTabId);
-            localStorage.setItem(STORAGE_KEY_THEME, JSON.stringify({theme: state.theme, norm: state.norm, multiViewIds: state.multiViewIds, multiViewMode: state.multiViewMode}));
-            const status = document.getElementById('save-status');
+            const payload = serializePersistenceState();
+            localStorage.setItem(STORAGE_KEY_TABS, JSON.stringify(payload.tabs));
+            localStorage.setItem(STORAGE_KEY_ACTIVE, payload.activeTabId);
+            localStorage.setItem(STORAGE_KEY_THEME, JSON.stringify(payload.themeData));
+            localStorage.setItem(STORAGE_KEY_RECOVERY, JSON.stringify({
+                savedAt: Date.now(),
+                ...payload
+            }));
+            const status = domRefs['save-status'];
             if (status) status.innerText = "Synced " + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         }
 
@@ -1988,80 +2336,117 @@
         }
 
         function addTab(title = 'untitled.txt', content = '') {
-            const id = Date.now().toString() + Math.random();
-            state.tabs.push({
-                id,
+            const nextState = createTabState({
+                tabs: state.tabs,
                 title,
                 content,
-                manuallyRenamed: title !== 'untitled.txt',
-                showLineNumbers: true,
-                showZebra: true,
-                outlineModeActive: false,
-                collapsedLines: [],
-                manualSavedContent: content,
-                manualSavedAt: Date.now()
+                createId: makeTabId
             });
-            state.activeTabId = id;
+            state.tabs = nextState.tabs;
+            state.activeTabId = nextState.activeTabId;
             saveToStorage();
             requestRender('full');
-            focusEditorAtStart(id);
+            focusEditorAtStart(nextState.activeTabId);
         }
 
         function closeTab(id) { 
-            if (state.tabs.length > 1) { 
-                state.tabs = state.tabs.filter(t => t.id !== id); state.multiViewIds = state.multiViewIds.filter(mid => mid !== id);
-                if (state.activeTabId === id) state.activeTabId = state.tabs[0].id; 
+            if (state.tabs.length > 1) {
+                const closeResult = closeTabState({
+                    tabs: state.tabs,
+                    multiViewIds: state.multiViewIds,
+                    activeTabId: state.activeTabId,
+                    tabId: id
+                });
+                if (!closeResult) return;
+                recordGlobalAction({
+                    type: 'close-tab',
+                    tabSnapshot: createTabRecord({
+                        ...closeResult.closingTab,
+                        collapsedLines: [...(closeResult.closingTab.collapsedLines || [])]
+                    }),
+                    index: closeResult.closeIndex,
+                    activeTabIdBefore: state.activeTabId,
+                    multiViewIdsBefore: [...state.multiViewIds]
+                });
+                state.tabs = closeResult.tabs;
+                state.multiViewIds = closeResult.multiViewIds;
+                state.activeTabId = closeResult.activeTabId;
                 saveToStorage();
                 requestRender('full');
-            } 
+            }
         }
 
-        function updateContent(id, content, textarea) {
+        function updateContent(id, content, textarea, options = {}) {
             const t = getTabById(id); if (!t) return;
-            if (t.content !== content) recordTabHistory(id);
+            if (t.content !== content) recordTabHistory(id, undefined, { coalesceTyping: Boolean(options.coalesceTyping) });
             t.content = content;
             invalidateTabCaches(id);
+            let shouldRenderTabs = false;
             if (!t.manuallyRenamed) {
                 t.title = deriveTitleFromText(getCachedLines(content, `${id}:title`)[0]);
-                requestRender('tabs');
+                shouldRenderTabs = true;
             }
             saveToStorage();
-            if (id === state.activeTabId) refreshSearchResults({ preserveIndex: true });
-            requestRender('toolbar');
+            if (shouldRenderTabs || id === state.activeTabId) {
+                requestRender({
+                    layout: false,
+                    tabs: shouldRenderTabs,
+                    editor: false,
+                    toolbar: id === state.activeTabId,
+                    find: id === state.activeTabId
+                });
+            }
         }
 
         function toggleSettings(open) {
-            const menu = document.getElementById('settings-menu'), overlay = document.getElementById('settings-overlay');
+            const menu = domRefs['settings-menu'], overlay = domRefs['settings-overlay'];
             if (open) { menu.classList.add('open'); overlay.classList.remove('hidden'); setTimeout(() => { overlay.style.opacity = "1"; }, 10); }
             else { menu.classList.remove('open'); overlay.style.opacity = "0"; setTimeout(() => { overlay.classList.add('hidden'); }, 200); }
         }
 
         function init() {
             const savedTabs = localStorage.getItem(STORAGE_KEY_TABS), savedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE), savedThemeData = localStorage.getItem(STORAGE_KEY_THEME);
+            const savedRecovery = localStorage.getItem(STORAGE_KEY_RECOVERY);
+            let primaryStateLoaded = false;
 
-            try {
-                state.tabs = savedTabs ? hydrateTabs(JSON.parse(savedTabs)) : [createDefaultTab()];
-            } catch {
-                state.tabs = [createDefaultTab()];
-            }
+            const parsedTabs = safeParseJSON(savedTabs, null);
+            state.tabs = parsedTabs ? hydrateTabs(parsedTabs) : [createDefaultTab()];
+            primaryStateLoaded = Boolean(parsedTabs);
 
             state.activeTabId = getTabById(savedActiveId) ? savedActiveId : state.tabs[0].id;
 
             if (savedThemeData) {
-                try {
-                    const p = JSON.parse(savedThemeData);
-                    state.theme = p.theme || state.theme;
-                    state.norm = {
-                        separator: p.norm?.separator || state.norm.separator,
-                        levels: Array.isArray(p.norm?.levels) && p.norm.levels.length === 7 ? p.norm.levels : [...DEFAULT_OUTLINE_LEVELS]
-                    };
-                    state.multiViewIds = Array.isArray(p.multiViewIds) ? p.multiViewIds.filter(id => getTabById(id)).slice(0, 4) : [];
-                    state.multiViewMode = p.multiViewMode || 'vert';
-                } catch {
+                const parsedTheme = safeParseJSON(savedThemeData, null);
+                if (parsedTheme) {
+                    const p = normalizePersistedThemePayload(parsedTheme);
+                    state.theme = p.theme;
+                    state.norm = p.norm;
+                    state.multiViewIds = p.multiViewIds.filter(id => getTabById(id)).slice(0, 4);
+                    state.multiViewMode = p.multiViewMode;
+                } else {
                     state.multiViewIds = [];
                     state.multiViewMode = 'vert';
                 }
             }
+
+            const shouldUseRecovery = !primaryStateLoaded && Boolean(savedRecovery);
+            if (shouldUseRecovery && savedRecovery) {
+                const recovery = safeParseJSON(savedRecovery, null);
+                if (recovery) {
+                    state.tabs = hydrateTabs(recovery.tabs);
+                    state.activeTabId = getTabById(recovery.activeTabId) ? recovery.activeTabId : state.tabs[0].id;
+                    const themePayload = normalizePersistedThemePayload(recovery.themeData);
+                    state.theme = themePayload.theme;
+                    state.norm = themePayload.norm;
+                    state.multiViewIds = themePayload.multiViewIds.filter(id => getTabById(id)).slice(0, 4);
+                    state.multiViewMode = themePayload.multiViewMode;
+                } else {
+                    debugInvariant('recovery snapshot failed to hydrate');
+                }
+            }
+
+            cacheDomRefs();
+            validateStateIntegrity('init');
             applyTheme(); setupListeners();
         }
 
@@ -2081,81 +2466,122 @@
             });
             document.addEventListener('mousemove', handlePendingLineDrag);
             document.addEventListener('mouseup', endDragSelection);
-            document.getElementById('add-tab-btn').onclick = () => addTab();
-            document.getElementById('duplicate-tab-btn').onclick = () => duplicateActiveTab();
-            document.getElementById('import-btn').onclick = () => document.getElementById('file-input').click();
-            document.getElementById('export-tab-btn').onclick = () => {
+            domRefs['add-tab-btn'].onclick = () => addTab();
+            domRefs['duplicate-tab-btn'].onclick = () => duplicateActiveTab();
+            domRefs['import-btn'].onclick = () => domRefs['file-input'].click();
+            domRefs['export-tab-btn'].onclick = () => {
                 const t = state.tabs.find(x => x.id === state.activeTabId);
                 if (t) {
                     triggerDownload(t.title, t.content);
                     markManualSave(t.id);
                 }
             };
-            document.getElementById('undo-btn').onclick = () => restoreTabHistory(state.activeTabId, 'undo');
-            document.getElementById('redo-btn').onclick = () => restoreTabHistory(state.activeTabId, 'redo');
-            document.getElementById('open-find-btn').onclick = () => {
+            domRefs['undo-btn'].onclick = () => performUndo();
+            domRefs['redo-btn'].onclick = () => performRedo();
+            domRefs['open-find-btn'].onclick = () => {
                 if (state.search.open) closeFindBar();
                 else openFindBar();
             };
-            document.getElementById('manual-save-btn').onclick = () => markManualSave(state.activeTabId);
-            document.getElementById('manual-save-all-btn').onclick = () => markManualSaveAll();
-            document.getElementById('restore-save-btn').onclick = () => restoreLastManualSave(state.activeTabId);
-            document.getElementById('export-all-btn').onclick = () => exportAll();
-            document.getElementById('find-next-btn').onclick = () => goToSearchResult(state.search.currentIndex + 1);
-            document.getElementById('find-input').oninput = (e) => {
+            domRefs['manual-save-btn'].onclick = () => markManualSave(state.activeTabId);
+            domRefs['manual-save-all-btn'].onclick = () => markManualSaveAll();
+            domRefs['restore-save-btn'].onclick = () => restoreLastManualSave(state.activeTabId);
+            domRefs['export-all-btn'].onclick = () => exportAll();
+            domRefs['find-next-btn'].onclick = () => goToSearchResult(state.search.currentIndex + 1);
+            domRefs['find-input'].oninput = (e) => {
                 state.search.query = e.target.value;
                 invalidateSearchCache();
                 refreshSearchResults();
                 requestRender('editor');
             };
-            document.getElementById('find-input').onkeydown = (e) => {
+            domRefs['find-input'].onkeydown = (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     goToSearchResult(state.search.currentIndex + 1);
                 }
             };
-            document.getElementById('find-fuzzy-toggle').onchange = (e) => {
+            domRefs['replace-input'].oninput = (e) => {
+                state.search.replace = e.target.value;
+                syncFindBarUi();
+            };
+            domRefs['replace-input'].onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    replaceCurrentSearchResult();
+                }
+            };
+            domRefs['replace-btn'].onclick = () => replaceCurrentSearchResult();
+            domRefs['replace-all-btn'].onclick = () => replaceAllSearchResults();
+            domRefs['find-fuzzy-toggle'].onchange = (e) => {
                 state.search.fuzzy = e.target.checked;
                 invalidateSearchCache();
                 refreshSearchResults();
                 requestRender('editor');
             };
-            document.getElementById('file-input').onchange = (e) => { Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onload = (ev) => addTab(file.name, ev.target.result); r.readAsText(file); }); e.target.value = ''; };
-            document.getElementById('open-settings-btn').onclick = () => toggleSettings(true);
-            document.getElementById('close-settings-btn').onclick = () => toggleSettings(false);
-            document.getElementById('settings-overlay').onclick = () => toggleSettings(false);
-            document.getElementById('toggle-tab-orientation').onclick = () => mutateState(() => {
+            domRefs['file-input'].onchange = (e) => { Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onload = (ev) => addTab(file.name, ev.target.result); r.readAsText(file); }); e.target.value = ''; };
+            domRefs['open-settings-btn'].onclick = () => toggleSettings(true);
+            domRefs['close-settings-btn'].onclick = () => toggleSettings(false);
+            domRefs['settings-overlay'].onclick = () => toggleSettings(false);
+            domRefs['toggle-tab-orientation'].onclick = () => mutateState(() => {
                 state.theme.orientation = state.theme.orientation === 'horizontal' ? 'vertical' : 'horizontal';
             }, { render: 'full', save: true });
-            document.getElementById('toggle-view-mode').onclick = () => mutateState(() => {
+            domRefs['toggle-view-mode'].onclick = () => mutateState(() => {
                 const modes = ['vert', 'horiz', 'card'];
                 state.multiViewMode = modes[(modes.indexOf(state.multiViewMode) + 1) % modes.length];
             }, { render: 'full', save: true });
-            document.querySelectorAll('.mode-btn').forEach(btn => { btn.onclick = () => { state.theme.mode = btn.dataset.mode; applyTheme(); saveToStorage(); }; });
-            document.getElementById('accent-swatches').onclick = (e) => { if (e.target.classList.contains('swatch')) { state.theme.accent = e.target.getAttribute('data-color'); applyTheme(); saveToStorage(); } };
-            document.getElementById('hex-accent').oninput = (e) => { if (/^[0-9A-Fa-f]{6}$/.test(e.target.value)) { state.theme.accent = '#' + e.target.value; applyTheme(); saveToStorage(); } };
-            document.getElementById('zip-export-toggle').onchange = (e) => mutateState(() => { state.theme.zipExport = e.target.checked; }, { save: true, render: 'toolbar' });
-            document.getElementById('norm-separator').oninput = (e) => { state.norm.separator = e.target.value; applyTheme(); saveToStorage(); };
-            document.querySelectorAll('.outline-level-input').forEach(input => {
+            domRefs.modeButtons.forEach(btn => {
+                btn.onclick = () => mutateState(() => {
+                    state.theme.mode = btn.dataset.mode;
+                    applyTheme();
+                }, { save: true });
+            });
+            domRefs['accent-swatches'].onclick = (e) => {
+                if (!e.target.classList.contains('swatch')) return;
+                mutateState(() => {
+                    state.theme.accent = e.target.getAttribute('data-color');
+                    applyTheme();
+                }, { save: true });
+            };
+            domRefs['hex-accent'].oninput = (e) => {
+                if (!/^[0-9A-Fa-f]{6}$/.test(e.target.value)) return;
+                mutateState(() => {
+                    state.theme.accent = '#' + e.target.value;
+                    applyTheme();
+                }, { save: true });
+            };
+            domRefs['zip-export-toggle'].onchange = (e) => mutateState(() => { state.theme.zipExport = e.target.checked; }, { save: true, render: 'toolbar' });
+            domRefs['norm-separator'].oninput = (e) => mutateState(() => {
+                state.norm.separator = e.target.value;
+                applyTheme();
+            }, { save: true });
+            domRefs.outlineLevelInputs.forEach(input => {
                 input.onchange = (e) => {
                     const index = Number(e.target.dataset.levelIndex);
                     const nextLevels = [...getOutlineLevels()];
                     nextLevels[index] = normalizeOutlineStyleInput(e.target.value, nextLevels[index] || DEFAULT_OUTLINE_LEVELS[index]);
-                    state.norm.levels = nextLevels;
-                    applyTheme();
-                    saveToStorage();
+                    mutateState(() => {
+                        state.norm.levels = nextLevels;
+                        applyTheme();
+                    }, { save: true });
                 };
             });
-            document.getElementById('reset-theme-btn').onclick = () => { state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false }; state.norm = { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] }; applyTheme(); saveToStorage(); };
-            document.getElementById('toggle-line-numbers').onclick = () => {
+            domRefs['reset-theme-btn'].onclick = () => mutateState(() => {
+                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false };
+                state.norm = { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] };
+                applyTheme();
+            }, { save: true });
+            domRefs['toggle-line-numbers'].onclick = () => {
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.showLineNumbers = !t.showLineNumbers; }, { render: 'full', save: true });
             };
-            document.getElementById('toggle-zebra').onclick = () => {
+            domRefs['toggle-zebra'].onclick = () => {
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.showZebra = !t.showZebra; }, { render: 'editor', save: true });
             };
-            document.getElementById('toggle-outline-mode').onclick = () => {
+            domRefs['toggle-word-wrap'].onclick = () => {
+                const t = getActiveTab(); if (!t) return;
+                mutateState(() => { t.showWordWrap = !t.showWordWrap; }, { render: 'editor', save: true });
+            };
+            domRefs['toggle-outline-mode'].onclick = () => {
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.outlineModeActive = !t.outlineModeActive; }, { render: 'editor', save: true });
             };
