@@ -759,6 +759,8 @@
             if (rawLine.includes('**')) flags.push({ type: 'important', color: '#8b5cf6' });
             if (rawLine.includes('--')) flags.push({ type: 'defer', color: '#0ea5e9' });
             if (/\bDONE\b/.test(rawLine)) flags.push({ type: 'done', color: '#22c55e' });
+            if (/@[A-Za-z0-9_.-]+/.test(rawLine)) flags.push({ type: 'mention', color: '#0ea5e9' });
+            if (/#[A-Za-z0-9_.-]+/.test(rawLine)) flags.push({ type: 'tag', color: '#22c55e' });
             return flags;
         }
 
