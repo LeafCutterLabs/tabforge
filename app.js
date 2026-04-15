@@ -26,6 +26,8 @@
             tempOutlineDisabled: false,
             activeLineIndex: 0,
             selectedLineRange: null,
+            selectedLineSet: null,
+            selectedLineAnchor: null,
             dragSelecting: null,
             dragMove: null,
             pendingLineDrag: null,
@@ -56,7 +58,7 @@
         const TYPING_HISTORY_COALESCE_MS = 900;
         const DEBUG_INVARIANTS = false;
 
-        const STORAGE_KEYS = getStorageKeys(54);
+        const STORAGE_KEYS = getStorageKeys(55);
         const STORAGE_KEY_TABS = STORAGE_KEYS.tabs;
         const STORAGE_KEY_ACTIVE = STORAGE_KEYS.active;
         const STORAGE_KEY_THEME = STORAGE_KEYS.theme;
@@ -129,19 +131,27 @@
                 'find-next-btn',
                 'replace-btn',
                 'replace-all-btn',
+                'print-btn',
+                'print-line-numbers-toggle',
                 'open-settings-btn',
                 'close-settings-btn',
                 'settings-overlay',
                 'settings-menu',
                 'toggle-view-mode',
                 'reset-theme-btn',
-                'accent-swatches'
+                'accent-swatch-btn',
+                'accent-color-picker',
+                'toggle-hide-completed',
+                'text-transform-group',
+                'transform-upper-btn',
+                'transform-lower-btn',
+                'transform-sentence-btn',
+                'transform-title-btn'
             ].forEach(id => {
                 domRefs[id] = document.getElementById(id);
             });
             domRefs.outlineLevelInputs = Array.from(document.querySelectorAll('.outline-level-input'));
             domRefs.modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
-            domRefs.swatches = Array.from(document.querySelectorAll('.swatch'));
         }
 
         function expandRenderFlags(flags = 'full') {
@@ -276,6 +286,24 @@
                         [state.selectedLineRange.start, state.selectedLineRange.end] = [state.selectedLineRange.end, state.selectedLineRange.start];
                     }
                 }
+            }
+
+            if (state.selectedLineSet) {
+                const selectedTab = getTabById(state.selectedLineSet.tabId);
+                if (!selectedTab) {
+                    debugInvariant(`selectedLineSet tab missing during ${context}, clearing`);
+                    state.selectedLineSet = null;
+                } else {
+                    const maxIndex = Math.max(0, getTabLines(selectedTab).length - 1);
+                    const nextIndices = [...new Set((state.selectedLineSet.indices || [])
+                        .filter(Number.isInteger)
+                        .map(index => Math.max(0, Math.min(index, maxIndex))))].sort((a, b) => a - b);
+                    state.selectedLineSet = nextIndices.length ? { tabId: selectedTab.id, indices: nextIndices } : null;
+                }
+            }
+
+            if (state.selectedLineAnchor && (!getTabById(state.selectedLineAnchor.tabId) || !Number.isInteger(state.selectedLineAnchor.index))) {
+                state.selectedLineAnchor = null;
             }
         }
 
@@ -437,12 +465,25 @@
         }
 
         function getSelectedLineRange(tabId) {
+            if (state.selectedLineSet && state.selectedLineSet.tabId === tabId && state.selectedLineSet.indices.length) {
+                const sorted = [...state.selectedLineSet.indices].sort((a, b) => a - b);
+                return {
+                    start: sorted[0],
+                    end: sorted[sorted.length - 1],
+                    indices: sorted,
+                    isMultiLine: sorted.length > 1,
+                    hasSelection: true,
+                    isSparse: sorted.length > 1 && !sorted.every((index, idx) => idx === 0 || index === sorted[idx - 1] + 1)
+                };
+            }
             if (state.selectedLineRange && state.selectedLineRange.tabId === tabId) {
                 return {
                     start: state.selectedLineRange.start,
                     end: state.selectedLineRange.end,
+                    indices: Array.from({ length: state.selectedLineRange.end - state.selectedLineRange.start + 1 }, (_, offset) => state.selectedLineRange.start + offset),
                     isMultiLine: state.selectedLineRange.start !== state.selectedLineRange.end,
-                    hasSelection: true
+                    hasSelection: true,
+                    isSparse: false
                 };
             }
 
@@ -461,9 +502,60 @@
             return {
                 start: Math.min(start, end),
                 end: Math.max(start, end),
+                indices: Array.from({ length: Math.abs(end - start) + 1 }, (_, offset) => Math.min(start, end) + offset),
                 isMultiLine: start !== end,
-                hasSelection: !selection.isCollapsed
+                hasSelection: !selection.isCollapsed,
+                isSparse: false
             };
+        }
+
+        function getSelectedLineIndices(tabId) {
+            const range = getSelectedLineRange(tabId);
+            return range?.indices ? [...range.indices] : [];
+        }
+
+        function isLineIndexSelected(tabId, lineIndex) {
+            return getSelectedLineIndices(tabId).includes(lineIndex);
+        }
+
+        function setSelectedLineIndices(tabId, indices) {
+            const sorted = [...new Set(indices.filter(Number.isInteger))].sort((a, b) => a - b);
+            state.selectedLineRange = null;
+            state.selectedLineSet = sorted.length ? { tabId, indices: sorted } : null;
+            if (sorted.length) {
+                state.selectedLineAnchor = { tabId, index: sorted[sorted.length - 1] };
+            }
+        }
+
+        function setSingleLineSelection(tabId, lineIndex) {
+            state.selectedLineSet = null;
+            state.selectedLineRange = { tabId, start: lineIndex, end: lineIndex };
+            state.selectedLineAnchor = { tabId, index: lineIndex };
+        }
+
+        function toggleSelectedLineIndex(tabId, lineIndex) {
+            const existing = state.selectedLineSet && state.selectedLineSet.tabId === tabId
+                ? [...state.selectedLineSet.indices]
+                : getSelectedLineIndices(tabId);
+            const next = existing.includes(lineIndex)
+                ? existing.filter(index => index !== lineIndex)
+                : [...existing, lineIndex];
+            setSelectedLineIndices(tabId, next);
+        }
+
+        function extendLineSelectionTo(tabId, lineIndex) {
+            const anchor = state.selectedLineAnchor && state.selectedLineAnchor.tabId === tabId
+                ? state.selectedLineAnchor.index
+                : lineIndex;
+            state.selectedLineSet = null;
+            setSelectedLineRange(tabId, anchor, lineIndex);
+            state.selectedLineAnchor = { tabId, index: anchor };
+        }
+
+        function clearSelectedLineSelection() {
+            state.selectedLineRange = null;
+            state.selectedLineSet = null;
+            state.selectedLineAnchor = null;
         }
 
         function focusEditorAtStart(tabId = state.activeTabId) {
@@ -638,10 +730,50 @@
             lineEl.style.backgroundPosition = positions.map(position => `${position}px 0`).join(',');
         }
 
-        function getAttentionType(rawLine) {
-            if (rawLine.includes('!!')) return 'urgent';
-            if (rawLine.includes('??')) return 'question';
-            return null;
+        function hexToRgb(hex) {
+            const normalized = String(hex || '').replace('#', '').trim();
+            if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
+            return {
+                r: parseInt(normalized.slice(0, 2), 16),
+                g: parseInt(normalized.slice(2, 4), 16),
+                b: parseInt(normalized.slice(4, 6), 16)
+            };
+        }
+
+        function blendHighlightColors(colors, alpha = 0.18) {
+            const rgbs = colors.map(hexToRgb).filter(Boolean);
+            if (!rgbs.length) return null;
+            const total = rgbs.reduce((acc, color) => ({
+                r: acc.r + color.r,
+                g: acc.g + color.g,
+                b: acc.b + color.b
+            }), { r: 0, g: 0, b: 0 });
+            const count = rgbs.length;
+            return `rgba(${Math.round(total.r / count)}, ${Math.round(total.g / count)}, ${Math.round(total.b / count)}, ${alpha})`;
+        }
+
+        function getAttentionFlags(rawLine) {
+            const flags = [];
+            if (rawLine.includes('!!')) flags.push({ type: 'urgent', color: '#ef4444' });
+            if (rawLine.includes('??')) flags.push({ type: 'question', color: '#f59e0b' });
+            if (rawLine.includes('**')) flags.push({ type: 'important', color: '#8b5cf6' });
+            if (rawLine.includes('--')) flags.push({ type: 'defer', color: '#0ea5e9' });
+            if (/\bDONE\b/.test(rawLine)) flags.push({ type: 'done', color: '#22c55e' });
+            return flags;
+        }
+
+        function hasBlockingAttention(rawLine) {
+            return getAttentionFlags(rawLine).length > 0;
+        }
+
+        function buildRowHighlight(flags, accentColor = state.theme.accent) {
+            if (!flags.length) return null;
+            const colors = flags.map(flag => flag.color);
+            const background = blendHighlightColors(colors, 0.18);
+            return {
+                background,
+                accent: colors[0] || accentColor
+            };
         }
 
         function getSubtreeEndIndex(lines, startIndex) {
@@ -666,7 +798,9 @@
             return [
                 tab?.id || '',
                 tab?.content || '',
-                JSON.stringify(tab?.collapsedLines || [])
+                JSON.stringify(tab?.collapsedLines || []),
+                tab?.hideCompletedLines ? 'hide-completed' : 'show-completed',
+                state.theme.accent || ''
             ].join('::');
         }
 
@@ -1019,7 +1153,7 @@
             tab.manualSavedAt = Date.now();
             invalidateTabCaches(tabId);
             saveToStorage();
-            requestRender('editor');
+            requestRender({ layout: false, tabs: true, editor: true, toolbar: true, find: false });
         }
 
         function markManualSaveAll() {
@@ -1030,7 +1164,7 @@
                 invalidateTabCaches(tab.id);
             });
             saveToStorage();
-            requestRender('editor');
+            requestRender({ layout: false, tabs: true, editor: true, toolbar: true, find: false });
         }
 
         function restoreLastManualSave(tabId = state.activeTabId) {
@@ -1201,15 +1335,24 @@
             const collapsed = getCollapsedLineSet(tab);
             const visible = [];
             let hiddenDepth = null;
+            let followsCollapsedGap = false;
 
             for (let i = 0; i < lines.length; i++) {
                 const depth = depths[i];
-                const attention = getAttentionType(lines[i]);
-                if (hiddenDepth !== null && depth > hiddenDepth && !attention) continue;
-                if (hiddenDepth !== null && depth <= hiddenDepth) hiddenDepth = null;
+                const attentionFlags = getAttentionFlags(lines[i]);
+                const isDone = attentionFlags.some(flag => flag.type === 'done');
+                if (tab.hideCompletedLines && isDone) continue;
+                if (hiddenDepth !== null && depth > hiddenDepth && !hasBlockingAttention(lines[i])) continue;
+                if (hiddenDepth !== null && depth <= hiddenDepth) {
+                    hiddenDepth = null;
+                    followsCollapsedGap = true;
+                }
 
                 const descendantCount = descendantCounts[i];
                 const isCollapsed = collapsed.has(i) && descendantCount >= 3;
+                const rowFlags = [...attentionFlags];
+                if (isCollapsed) rowFlags.push({ type: 'collapsed-parent', color: state.theme.accent });
+                if (followsCollapsedGap) rowFlags.push({ type: 'collapsed-gap', color: state.theme.accent });
                 visible.push({
                     index: i,
                     raw: lines[i],
@@ -1218,9 +1361,12 @@
                     descendantCount,
                     isCollapsed,
                     showToggle: descendantCount >= 3,
-                    attention
+                    attentionFlags,
+                    rowHighlight: buildRowHighlight(rowFlags),
+                    followsCollapsedGap
                 });
 
+                followsCollapsedGap = false;
                 if (isCollapsed) hiddenDepth = depth;
             }
 
@@ -1263,11 +1409,13 @@
         }
 
         function setSelectedLineRange(tabId, start, end) {
+            state.selectedLineSet = null;
             state.selectedLineRange = {
                 tabId,
                 start: Math.min(start, end),
                 end: Math.max(start, end)
             };
+            state.selectedLineAnchor = { tabId, index: start };
         }
 
         function clearSelectedLineRange() {
@@ -1281,7 +1429,7 @@
             }
             state.pendingLineDrag = null;
             if (state.dragSelecting && !state.dragSelecting.moved) {
-                clearSelectedLineRange();
+                clearSelectedLineSelection();
             }
             state.dragSelecting = null;
         }
@@ -1298,8 +1446,8 @@
         }
 
         function getDragMoveRange(tabId, lineIndex) {
-            const selectedRange = state.selectedLineRange && state.selectedLineRange.tabId === tabId ? state.selectedLineRange : null;
-            if (selectedRange && lineIndex >= selectedRange.start && lineIndex <= selectedRange.end) {
+            const selectedRange = getSelectedLineRange(tabId);
+            if (selectedRange && !selectedRange.isSparse && lineIndex >= selectedRange.start && lineIndex <= selectedRange.end) {
                 return { start: selectedRange.start, end: selectedRange.end };
             }
             const tab = getTabById(tabId);
@@ -1339,7 +1487,7 @@
                 hoverIndex: range.end,
                 position: 'after'
             };
-            clearSelectedLineRange();
+            clearSelectedLineSelection();
             requestRender('editor', { immediate: true });
         }
 
@@ -1382,30 +1530,45 @@
         }
 
         function shiftOutlineRange(lines, startIndex, endIndex, delta, shouldNormalize) {
-            const shifted = shiftLineRange(lines, startIndex, endIndex, delta);
-            return shouldNormalize ? normalizeOutlineLines(shifted, []) : shifted;
+            const block = lines.slice(startIndex, endIndex + 1);
+            const shiftedBlock = shiftOutlineBlock(block, delta);
+            const nextLines = [...lines];
+            nextLines.splice(startIndex, block.length, ...shiftedBlock);
+            return shouldNormalize ? normalizeOutlineLines(nextLines, []) : nextLines;
         }
 
         function handleSelectedRangeTab(e) {
-            if (e.key !== 'Tab' || !state.selectedLineRange) return;
-            const tab = getTabById(state.selectedLineRange.tabId);
+            if (e.key !== 'Tab') return;
+            const tab = getSelectedRangeTab();
             if (!tab) return;
             e.preventDefault();
             const currentLines = getTabLines(tab);
-            const nextLines = shiftOutlineRange(
-                currentLines,
-                state.selectedLineRange.start,
-                state.selectedLineRange.end,
-                e.shiftKey ? -1 : 1,
-                tab.outlineModeActive && !state.tempOutlineDisabled
-            );
-            const focusLine = state.selectedLineRange.start;
-            clearSelectedLineRange();
+            const indices = getSelectedLineIndices(tab.id);
+            if (!indices.length) return;
+            let nextLines = [...currentLines];
+            const segments = [];
+            let segmentStart = indices[0];
+            let previous = indices[0];
+            for (let i = 1; i < indices.length; i++) {
+                if (indices[i] !== previous + 1) {
+                    segments.push([segmentStart, previous]);
+                    segmentStart = indices[i];
+                }
+                previous = indices[i];
+            }
+            segments.push([segmentStart, previous]);
+            [...segments].reverse().forEach(([start, end]) => {
+                nextLines = tab.outlineModeActive && !state.tempOutlineDisabled
+                    ? shiftOutlineRange(nextLines, start, end, e.shiftKey ? -1 : 1, true)
+                    : shiftLineRange(nextLines, start, end, e.shiftKey ? -1 : 1);
+            });
+            const focusLine = indices[0];
+            clearSelectedLineSelection();
             updateTabLines(tab.id, nextLines, focusLine, 0);
         }
 
         function handleSelectedRangeDelete(e) {
-            if (!state.selectedLineRange) return;
+            if (!getSelectedRangeTab()) return;
             if (e.key !== 'Backspace' && e.key !== 'Delete') return;
             e.preventDefault();
             deleteSelectedRangeLines();
@@ -1461,7 +1624,8 @@
         }
 
         function getSelectedRangeTab() {
-            return state.selectedLineRange ? getTabById(state.selectedLineRange.tabId) : null;
+            const tabId = state.selectedLineSet?.tabId || state.selectedLineRange?.tabId;
+            return tabId ? getTabById(tabId) : null;
         }
 
         function normalizeClipboardText(text) {
@@ -1469,21 +1633,23 @@
         }
 
         function getSelectedRangeLines(tab) {
-            if (!tab || !state.selectedLineRange || state.selectedLineRange.tabId !== tab.id) return [];
+            if (!tab) return [];
             const lines = getTabLines(tab);
-            return lines.slice(state.selectedLineRange.start, state.selectedLineRange.end + 1);
+            return getSelectedLineIndices(tab.id).map(index => lines[index]).filter(line => line !== undefined);
         }
 
         function deleteSelectedRangeLines() {
             const tab = getSelectedRangeTab();
             if (!tab) return;
             const currentLines = getTabLines(tab);
-            const start = state.selectedLineRange.start;
-            const end = state.selectedLineRange.end;
-            const remainingLines = currentLines.filter((_, index) => index < start || index > end);
+            const indices = getSelectedLineIndices(tab.id);
+            if (!indices.length) return;
+            const firstIndex = indices[0];
+            const indexSet = new Set(indices);
+            const remainingLines = currentLines.filter((_, index) => !indexSet.has(index));
             const nextLines = remainingLines.length ? remainingLines : [''];
-            const focusLine = Math.max(0, Math.min(start, nextLines.length - 1));
-            clearSelectedLineRange();
+            const focusLine = Math.max(0, Math.min(firstIndex, nextLines.length - 1));
+            clearSelectedLineSelection();
             updateTabLines(tab.id, nextLines, focusLine, 0);
         }
 
@@ -1513,15 +1679,14 @@
             if (!pasted) return;
             e.preventDefault();
             const currentLines = getTabLines(tab);
-            const start = state.selectedLineRange.start;
-            const end = state.selectedLineRange.end;
+            const indices = getSelectedLineIndices(tab.id);
+            if (!indices.length) return;
+            const start = indices[0];
+            const indexSet = new Set(indices);
             const incomingLines = pasted.split('\n');
-            const nextLines = [
-                ...currentLines.slice(0, start),
-                ...incomingLines,
-                ...currentLines.slice(end + 1)
-            ];
-            clearSelectedLineRange();
+            const nextLines = currentLines.filter((_, index) => !indexSet.has(index));
+            nextLines.splice(start, 0, ...incomingLines);
+            clearSelectedLineSelection();
             updateTabLines(tab.id, nextLines, start + incomingLines.length - 1, incomingLines[incomingLines.length - 1].length);
         }
 
@@ -1560,6 +1725,8 @@
                 const active = state.activeTabId === tab.id;
                 const mvIndex = state.multiViewIds.indexOf(tab.id);
                 const isSelected = mvIndex !== -1;
+                const isDirty = isTabDirty(tab);
+                const mvStatusClass = isDirty ? 'mv-dirty' : 'mv-saved';
                 const el = document.createElement('div');
                 el.draggable = true;
                 el.className = "group flex items-center h-8 px-3 mr-0.5 cursor-pointer text-xs select-none tab-btn " + (active ? 'tab-active shadow-sm' : 'tab-inactive');
@@ -1587,7 +1754,7 @@
                 };
                 
                 el.innerHTML = `
-                    <button class="mv-toggle mr-2 w-4 h-4 flex items-center justify-center rounded border transition-colors text-current ${isSelected ? 'border-accent font-bold text-[10px]' : 'border-transparent opacity-60 hover:opacity-100'}">
+                    <button class="mv-toggle ${mvStatusClass} mr-2 w-4 h-4 flex items-center justify-center rounded border transition-colors text-current ${isSelected ? 'font-bold text-[10px]' : 'opacity-75 hover:opacity-100'}">
                         ${isSelected ? (mvIndex + 1) : '<div class="w-1.5 h-1.5 rounded-full border border-current"></div>'}
                     </button>
                     <span class="tab-title truncate flex-1">${tab.title}</span>
@@ -1674,14 +1841,20 @@
                 if (tab.showZebra && tab.showWordWrap && visibleIndex % 2 === 1) row.classList.add('zebra-row-alt');
                 row.dataset.rowIndex = String(node.index);
                 row.dataset.tabId = tab.id;
-                const selectedRange = state.selectedLineRange && state.selectedLineRange.tabId === tab.id ? state.selectedLineRange : null;
-                const isRowSelected = selectedRange && node.index >= selectedRange.start && node.index <= selectedRange.end;
+                const isRowSelected = isLineIndexSelected(tab.id, node.index);
                 if (isRowSelected) row.classList.add('row-selected');
                 if (state.dragMove && state.dragMove.tabId === tab.id && node.index >= state.dragMove.start && node.index <= state.dragMove.end) {
                     row.classList.add('drag-source');
                 }
-                if (node.attention === 'question') row.classList.add('attention-question');
-                if (node.attention === 'urgent') row.classList.add('attention-urgent');
+                if (node.rowHighlight) {
+                    row.classList.add('has-row-highlight');
+                    row.style.setProperty('--row-highlight-bg', node.rowHighlight.background);
+                    row.style.setProperty('--row-highlight-accent', node.rowHighlight.accent);
+                }
+                if (node.attentionFlags.some(flag => flag.type === 'question')) row.classList.add('attention-question');
+                if (node.attentionFlags.some(flag => flag.type === 'urgent')) row.classList.add('attention-urgent');
+                if (node.isCollapsed) row.classList.add('collapsed-parent-highlight');
+                if (node.followsCollapsedGap) row.classList.add('after-collapsed-gap');
                 if ((lines[node.index] || '') !== (savedLines[node.index] || '')) row.classList.add('revision-changed');
                 if (state.dragMove && state.dragMove.tabId === tab.id && state.dragMove.hoverIndex === node.index) {
                     row.classList.add(state.dragMove.position === 'before' ? 'drop-before' : 'drop-after');
@@ -1689,11 +1862,12 @@
 
                 if (tab.showLineNumbers) {
                     const gutter = document.createElement('div');
-                    gutter.className = 'outline-gutter';
+                    gutter.className = 'outline-gutter line-selectable';
                     if (node.showToggle) {
                         const toggle = document.createElement('span');
                         toggle.className = 'outline-toggle';
                         toggle.textContent = node.isCollapsed ? '+' : '-';
+                        toggle.onmousedown = (e) => e.stopPropagation();
                         toggle.onclick = (e) => {
                             e.stopPropagation();
                             toggleCollapsedLine(tab.id, node.index);
@@ -1703,7 +1877,20 @@
                     const label = document.createElement('span');
                     label.textContent = String(node.index + 1);
                     gutter.appendChild(label);
-                    gutter.onmousedown = (e) => e.stopPropagation();
+                    gutter.onmousedown = (e) => {
+                        e.stopPropagation();
+                        state.activeTabId = tab.id;
+                        state.activeLineIndex = node.index;
+                        if (e.ctrlKey || e.metaKey) {
+                            toggleSelectedLineIndex(tab.id, node.index);
+                        } else if (e.shiftKey) {
+                            extendLineSelectionTo(tab.id, node.index);
+                        } else {
+                            setSingleLineSelection(tab.id, node.index);
+                        }
+                        window.getSelection()?.removeAllRanges();
+                        requestRender('editor', { immediate: true });
+                    };
                     row.appendChild(gutter);
                 }
 
@@ -1739,7 +1926,7 @@
                         }
                     });
                     if (state.preserveSelectionOnFocus) state.preserveSelectionOnFocus = false;
-                    else if (!state.dragSelecting) clearSelectedLineRange();
+                    else if (!state.dragSelecting) clearSelectedLineSelection();
                     updateToolbarUI();
                 };
 
@@ -1759,8 +1946,7 @@
 
                 line.onmousedown = (e) => {
                     if (e.button !== 0) return;
-                    const selectedRange = state.selectedLineRange && state.selectedLineRange.tabId === tab.id ? state.selectedLineRange : null;
-                    const rowIsSelected = selectedRange && node.index >= selectedRange.start && node.index <= selectedRange.end;
+                    const rowIsSelected = isLineIndexSelected(tab.id, node.index);
                     if (e.shiftKey && (line.classList.contains('drag-ready') || rowIsSelected)) {
                         e.stopPropagation();
                         state.activeTabId = tab.id;
@@ -1775,7 +1961,7 @@
                     if (e.button !== 0) return;
                     state.activeTabId = tab.id;
                     state.activeLineIndex = node.index;
-                    clearSelectedLineRange();
+                    clearSelectedLineSelection();
                     state.dragSelecting = { tabId: tab.id, anchor: node.index, moved: false };
                 };
 
@@ -1851,11 +2037,26 @@
                         e.preventDefault();
                         const selectedRange = getSelectedLineRange(tab.id);
                         if (selectedRange && (selectedRange.isMultiLine || (selectedRange.hasSelection && tab.outlineModeActive && !state.tempOutlineDisabled))) {
-                            const nextLines = tab.outlineModeActive && !state.tempOutlineDisabled
-                                ? shiftOutlineRange(currentLines, selectedRange.start, selectedRange.end, e.shiftKey ? -1 : 1, true)
-                                : shiftLineRange(currentLines, selectedRange.start, selectedRange.end, e.shiftKey ? -1 : 1);
-                            clearSelectedLineRange();
-                            updateTabLines(tab.id, nextLines, selectedRange.start, 0);
+                            const indices = selectedRange.indices || getSelectedLineIndices(tab.id);
+                            let nextLines = [...currentLines];
+                            const segments = [];
+                            let segmentStart = indices[0];
+                            let previous = indices[0];
+                            for (let i = 1; i < indices.length; i++) {
+                                if (indices[i] !== previous + 1) {
+                                    segments.push([segmentStart, previous]);
+                                    segmentStart = indices[i];
+                                }
+                                previous = indices[i];
+                            }
+                            segments.push([segmentStart, previous]);
+                            [...segments].reverse().forEach(([start, end]) => {
+                                nextLines = tab.outlineModeActive && !state.tempOutlineDisabled
+                                    ? shiftOutlineRange(nextLines, start, end, e.shiftKey ? -1 : 1, true)
+                                    : shiftLineRange(nextLines, start, end, e.shiftKey ? -1 : 1);
+                            });
+                            clearSelectedLineSelection();
+                            updateTabLines(tab.id, nextLines, indices[0], 0);
                             return;
                         }
                         if (!tab.outlineModeActive || state.tempOutlineDisabled) {
@@ -1903,15 +2104,12 @@
                             e.preventDefault();
                             const target = visible[targetVisibleIndex];
                             if (e.shiftKey) {
-                                const existingRange = state.selectedLineRange && state.selectedLineRange.tabId === tab.id
-                                    ? state.selectedLineRange
-                                    : { start: node.index, end: node.index };
-                                const anchor = node.index === existingRange.start ? existingRange.end : existingRange.start;
-                                setSelectedLineRange(tab.id, anchor, target.index);
+                                extendLineSelectionTo(tab.id, target.index);
                                 state.preserveSelectionOnFocus = true;
                                 requestRender('editor', { immediate: true });
                             } else {
-                                clearSelectedLineRange();
+                                clearSelectedLineSelection();
+                                state.selectedLineAnchor = { tabId: tab.id, index: target.index };
                             }
                             state.activeLineIndex = target.index;
                             requestAnimationFrame(() => {
@@ -2034,7 +2232,8 @@
                 {id: 'toggle-line-numbers', active: t.showLineNumbers}, 
                 {id: 'toggle-zebra', active: t.showZebra}, 
                 {id: 'toggle-word-wrap', active: t.showWordWrap},
-                {id: 'toggle-outline-mode', active: t.outlineModeActive}
+                {id: 'toggle-outline-mode', active: t.outlineModeActive},
+                {id: 'toggle-hide-completed', active: t.hideCompletedLines}
             ];
             
             toggles.forEach(item => {
@@ -2091,6 +2290,12 @@
                 ? 'Autosaved · Revision pending'
                 : `Revision saved ${formatManualSaveTime(t.manualSavedAt)}`;
             domRefs['open-find-btn'].classList.toggle('btn-active', state.search.open);
+            const canTransform = canTransformSelectedText();
+            domRefs['text-transform-group']?.classList.toggle('hidden', !canTransform);
+            domRefs['text-transform-group']?.classList.toggle('flex', canTransform);
+            ['transform-upper-btn', 'transform-lower-btn', 'transform-sentence-btn', 'transform-title-btn'].forEach(id => {
+                if (domRefs[id]) domRefs[id].disabled = !canTransform;
+            });
 
             domRefs['zip-export-toggle'].checked = state.theme.zipExport;
             
@@ -2298,7 +2503,7 @@
 
                 const nextIndent = Math.max(0, info.indent + delta);
                 if (info.type === 'bullet') return replaceLineMarker(line, info, nextIndent, 'bullet', shiftBulletMarker(info.value, delta > 0 ? 1 : -1));
-                return replaceLineMarker(line, info, nextIndent, info.type, info.value);
+                return replaceLineMarker(line, info, nextIndent, getMarkerTypeForDepth(nextIndent), 1);
             });
         }
 
@@ -2373,12 +2578,86 @@
             }
         }
 
+        function getFocusedEditableLine() {
+            const active = document.activeElement;
+            return active && active.classList?.contains('outline-line') ? active : null;
+        }
+
+        function canTransformSelectedText() {
+            const line = getFocusedEditableLine();
+            const selection = line ? getSelectionOffsets(line) : null;
+            return Boolean(selection && !selection.collapsed);
+        }
+
+        function transformSelectedText(mode) {
+            const line = getFocusedEditableLine();
+            if (!line || !mode) return;
+            const selection = getSelectionOffsets(line);
+            if (!selection || selection.collapsed) return;
+            const tabId = line.dataset.tabLine.split(':')[0];
+            const lineIndex = Number(line.dataset.lineIndex);
+            const tab = getTabById(tabId);
+            if (!tab || !Number.isInteger(lineIndex)) return;
+            const currentLines = [...getTabLines(tab)];
+            const rawLine = currentLines[lineIndex];
+            const leadingTabs = (rawLine.match(/^\t*/) || [''])[0];
+            const displayText = getDisplayText(rawLine);
+            const selectedText = displayText.slice(selection.start, selection.end);
+            let transformed = selectedText;
+
+            if (mode === 'upper') transformed = selectedText.toUpperCase();
+            if (mode === 'lower') transformed = selectedText.toLowerCase();
+            if (mode === 'sentence') {
+                const lower = selectedText.toLowerCase();
+                transformed = lower.charAt(0).toUpperCase() + lower.slice(1);
+            }
+            if (mode === 'title') {
+                transformed = selectedText.toLowerCase().replace(/\b([a-z])/g, match => match.toUpperCase());
+            }
+
+            currentLines[lineIndex] = leadingTabs + displayText.slice(0, selection.start) + transformed + displayText.slice(selection.end);
+            state.pendingCaret = { tabId, lineIndex, offset: selection.start + transformed.length };
+            updateTabLines(tabId, currentLines, lineIndex, selection.start + transformed.length);
+            requestAnimationFrame(() => {
+                const nextLine = getLineEditor(tabId, lineIndex);
+                if (!nextLine) return;
+                nextLine.focus({ preventScroll: true });
+                selectLineRange(nextLine, selection.start, selection.start + transformed.length);
+            });
+        }
+
+        function printCurrentTab() {
+            const tab = getActiveTab();
+            if (!tab) return;
+            const includeLineNumbers = Boolean(domRefs['print-line-numbers-toggle']?.checked);
+            const lines = getTabLines(tab);
+            const content = lines.map((line, index) => {
+                const text = escapeHtml(line.replace(/\t/g, '    '));
+                return includeLineNumbers
+                    ? `<div><span class="print-ln">${index + 1}</span><span>${text || '&nbsp;'}</span></div>`
+                    : `<div>${text || '&nbsp;'}</div>`;
+            }).join('');
+            const printWindow = window.open('', '_blank', 'width=900,height=700');
+            if (!printWindow) return;
+            printWindow.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(tab.title)}</title><style>
+                body{font-family:Consolas,Menlo,monospace;margin:24px;color:#111827;background:#fff;}
+                .print-lines{white-space:pre-wrap;line-height:1.6;font-size:13px;}
+                .print-lines > div{display:flex;gap:12px;min-height:22px;}
+                .print-ln{display:inline-block;width:36px;color:#64748b;text-align:right;flex-shrink:0;}
+            </style></head><body><div class="print-lines">${content}</div></body></html>`);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+        }
+
         function applyTheme() {
             const root = document.documentElement; const { accent, mode } = state.theme;
             root.style.setProperty('--accent-color', accent);
             document.body.classList.remove('theme-light', 'theme-dark', 'theme-matrix');
             if (mode !== 'default') document.body.classList.add('theme-' + mode);
             domRefs['hex-accent'].value = accent.replace('#', '');
+            if (domRefs['accent-color-picker']) domRefs['accent-color-picker'].value = accent;
+            if (domRefs['accent-swatch-btn']) domRefs['accent-swatch-btn'].style.backgroundColor = accent;
             domRefs['norm-separator'].value = state.norm.separator;
             domRefs.outlineLevelInputs.forEach((input, index) => {
                 input.value = getOutlineStyleLabel(getOutlineLevels()[index] || DEFAULT_OUTLINE_LEVELS[index]);
@@ -2389,7 +2668,6 @@
                 btn.style.color = isActive ? 'white' : 'inherit';
                 btn.style.borderColor = isActive ? accent : 'var(--border-color)';
             });
-            domRefs.swatches.forEach(s => s.classList.toggle('active', s.getAttribute('data-color').toLowerCase() === accent.toLowerCase()));
             requestRender('full');
         }
 
@@ -2463,10 +2741,9 @@
             if (t.content !== content) recordTabHistory(id, undefined, { coalesceTyping: Boolean(options.coalesceTyping) });
             t.content = content;
             invalidateTabCaches(id);
-            let shouldRenderTabs = false;
+            let shouldRenderTabs = true;
             if (!t.manuallyRenamed) {
                 t.title = deriveTitleFromText(getCachedLines(content, `${id}:title`)[0]);
-                shouldRenderTabs = true;
             }
             saveToStorage();
             if (shouldRenderTabs || id === state.activeTabId) {
@@ -2552,6 +2829,7 @@
             document.addEventListener('copy', handleSelectedRangeCopy);
             document.addEventListener('cut', handleSelectedRangeCut);
             document.addEventListener('paste', handleSelectedRangePaste);
+            document.addEventListener('selectionchange', () => updateToolbarUI());
             document.addEventListener('keydown', (e) => updateHoveredLineDragReady(e.shiftKey));
             document.addEventListener('keyup', (e) => {
                 if (e.key === 'Shift') updateHoveredLineDragReady(false);
@@ -2578,6 +2856,7 @@
             domRefs['manual-save-all-btn'].onclick = () => markManualSaveAll();
             domRefs['restore-save-btn'].onclick = () => restoreLastManualSave(state.activeTabId);
             domRefs['export-all-btn'].onclick = () => exportAll();
+            domRefs['print-btn'].onclick = () => printCurrentTab();
             domRefs['find-next-btn'].onclick = () => goToSearchResult(state.search.currentIndex + 1);
             domRefs['find-input'].oninput = (e) => {
                 state.search.query = e.target.value;
@@ -2626,10 +2905,12 @@
                     applyTheme();
                 }, { save: true });
             });
-            domRefs['accent-swatches'].onclick = (e) => {
-                if (!e.target.classList.contains('swatch')) return;
+            domRefs['accent-swatch-btn'].onclick = () => {
+                domRefs['accent-color-picker']?.click();
+            };
+            domRefs['accent-color-picker'].oninput = (e) => {
                 mutateState(() => {
-                    state.theme.accent = e.target.getAttribute('data-color');
+                    state.theme.accent = e.target.value;
                     applyTheme();
                 }, { save: true });
             };
@@ -2677,6 +2958,14 @@
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.outlineModeActive = !t.outlineModeActive; }, { render: 'editor', save: true });
             };
+            domRefs['toggle-hide-completed'].onclick = () => {
+                const t = getActiveTab(); if (!t) return;
+                mutateState(() => { t.hideCompletedLines = !t.hideCompletedLines; }, { render: 'editor', save: true });
+            };
+            domRefs['transform-upper-btn'].onclick = () => transformSelectedText('upper');
+            domRefs['transform-lower-btn'].onclick = () => transformSelectedText('lower');
+            domRefs['transform-sentence-btn'].onclick = () => transformSelectedText('sentence');
+            domRefs['transform-title-btn'].onclick = () => transformSelectedText('title');
         }
 
         window.onload = init;

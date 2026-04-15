@@ -12,6 +12,7 @@
         showZebra = true,
         showWordWrap = false,
         outlineModeActive = false,
+        hideCompletedLines = false,
         collapsedLines = [],
         manualSavedContent,
         manualSavedAt
@@ -25,6 +26,7 @@
             showZebra,
             showWordWrap,
             outlineModeActive,
+            hideCompletedLines,
             collapsedLines: normalizeCollapsedLines(collapsedLines),
             manualSavedContent: typeof manualSavedContent === 'string' ? manualSavedContent : content,
             manualSavedAt: typeof manualSavedAt === 'number' ? manualSavedAt : Date.now()
@@ -41,6 +43,7 @@
             showZebra: tab?.showZebra !== false,
             showWordWrap: Boolean(tab?.showWordWrap),
             outlineModeActive: tab?.outlineModeActive !== false,
+            hideCompletedLines: Boolean(tab?.hideCompletedLines),
             collapsedLines: tab?.collapsedLines,
             manualSavedContent: tab?.manualSavedContent,
             manualSavedAt: tab?.manualSavedAt
@@ -57,6 +60,7 @@
             showZebra: source.showZebra,
             showWordWrap: source.showWordWrap,
             outlineModeActive: source.outlineModeActive,
+            hideCompletedLines: source.hideCompletedLines,
             collapsedLines: source.collapsedLines,
             manualSavedContent: source.content,
             manualSavedAt: Date.now()
