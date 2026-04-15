@@ -325,12 +325,54 @@
         }
 
         function getOutlineStyleLabel(style) {
-            return OUTLINE_STYLE_LABELS[style] || '1.';
+            return OUTLINE_STYLE_LABELS[style] || style || '1.';
         }
 
         function normalizeOutlineStyleInput(value, fallback) {
-            const normalized = value.trim().toLowerCase();
-            return OUTLINE_LABEL_TO_STYLE[normalized] || fallback;
+            const trimmed = value.trim();
+            if (!trimmed) return fallback;
+            const normalized = trimmed.toLowerCase();
+            return OUTLINE_LABEL_TO_STYLE[normalized] || trimmed;
+        }
+
+        function parseOutlineStyleTemplate(style) {
+            const sample = String(style || '').trim();
+            if (!sample) return null;
+
+            const parenMatch = sample.match(/^([^A-Za-z0-9]*)(\(?)([A-Za-z0-9]+)(\)?)([^A-Za-z0-9]*)$/);
+            if (!parenMatch) return null;
+
+            const prefix = `${parenMatch[1] || ''}${parenMatch[2] || ''}`;
+            const token = parenMatch[3] || '';
+            const suffix = `${parenMatch[4] || ''}${parenMatch[5] || ''}`;
+
+            let kind = null;
+            let caseMode = 'lower';
+
+            if (/^\d+$/.test(token)) {
+                kind = 'number';
+            } else if (/^[IVXLCDM]+$/.test(token)) {
+                kind = 'roman';
+                caseMode = 'upper';
+            } else if (/^[ivxlcdm]+$/.test(token) && token.length > 1) {
+                kind = 'roman';
+                caseMode = 'lower';
+            } else if (token === 'I') {
+                kind = 'roman';
+                caseMode = 'upper';
+            } else if (token === 'i') {
+                kind = 'roman';
+                caseMode = 'lower';
+            } else if (/^[A-Z]$/.test(token)) {
+                kind = 'alpha';
+                caseMode = 'upper';
+            } else if (/^[a-z]$/.test(token)) {
+                kind = 'alpha';
+                caseMode = 'lower';
+            }
+
+            if (!kind) return null;
+            return { kind, caseMode, prefix, suffix };
         }
 
         function getEditorTextarea(tabId = state.activeTabId) {
@@ -360,6 +402,27 @@
             range.selectNodeContents(el);
             range.setEnd(selection.anchorNode, selection.anchorOffset);
             return range.toString().length;
+        }
+
+        function getSelectionOffsets(el) {
+            const selection = window.getSelection();
+            if (!selection || !selection.rangeCount) return null;
+            const range = selection.getRangeAt(0);
+            if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+
+            const startRange = range.cloneRange();
+            startRange.selectNodeContents(el);
+            startRange.setEnd(range.startContainer, range.startOffset);
+
+            const endRange = range.cloneRange();
+            endRange.selectNodeContents(el);
+            endRange.setEnd(range.endContainer, range.endOffset);
+
+            return {
+                start: startRange.toString().length,
+                end: endRange.toString().length,
+                collapsed: range.collapsed
+            };
         }
 
         function getLineElementFromNode(node) {
@@ -1598,9 +1661,10 @@
         function createEditorElement(tab) {
             const wrap = document.createElement('div');
             wrap.className = "flex-1 overflow-auto relative h-full editor-cell";
+            wrap.dataset.editorTab = tab.id;
             if (tab.showWordWrap) wrap.classList.add('word-wrap-enabled');
             const root = document.createElement('div');
-            root.className = "outline-root h-full " + (tab.showZebra && !tab.showWordWrap ? 'zebra-mode' : '');
+            root.className = "outline-root min-h-full " + (tab.showZebra && !tab.showWordWrap ? 'zebra-mode' : '');
             const { lines, visible } = getVisibleLineState(tab);
             const savedLines = getManualSavedLines(tab);
 
@@ -1656,27 +1720,32 @@
                 line.onfocus = () => {
                     state.activeTabId = tab.id;
                     state.activeLineIndex = node.index;
-                    const selection = window.getSelection();
-                    const hadCaretInLine = Boolean(selection && selection.rangeCount && line.contains(selection.anchorNode));
-                    const caretOffset = hadCaretInLine ? getCaretOffset(line) : null;
-                    setLineDisplayContent(line, node.text, true);
+                    const selectionInfo = getSelectionOffsets(line);
+                    const latestLineText = getDisplayText((getTabLines(getTabById(tab.id))[node.index]) || '');
+                    setLineDisplayContent(line, latestLineText, true);
                     const pendingCaret = state.pendingCaret
                         && state.pendingCaret.tabId === tab.id
                         && state.pendingCaret.lineIndex === node.index
                         ? state.pendingCaret
                         : null;
-                    const targetOffset = pendingCaret ? pendingCaret.offset : caretOffset;
                     if (pendingCaret) state.pendingCaret = null;
-                    if (targetOffset !== null) {
-                        requestAnimationFrame(() => placeCaret(line, targetOffset));
-                    }
+                    requestAnimationFrame(() => {
+                        if (pendingCaret) {
+                            placeCaret(line, pendingCaret.offset);
+                        } else if (selectionInfo && !selectionInfo.collapsed) {
+                            selectLineRange(line, selectionInfo.start, selectionInfo.end);
+                        } else if (selectionInfo) {
+                            placeCaret(line, selectionInfo.end);
+                        }
+                    });
                     if (state.preserveSelectionOnFocus) state.preserveSelectionOnFocus = false;
                     else if (!state.dragSelecting) clearSelectedLineRange();
                     updateToolbarUI();
                 };
 
                 line.onblur = () => {
-                    setLineDisplayContent(line, line.textContent || '', false, node.index);
+                    const latestLineText = getDisplayText((getTabLines(getTabById(tab.id))[node.index]) || (line.textContent || ''));
+                    setLineDisplayContent(line, latestLineText, false, node.index);
                 };
 
                 line.onmouseenter = () => {
@@ -1810,11 +1879,7 @@
                             const info = getSymbolInfo(currentLines[node.index]);
                             if (info) {
                                 if (info.type === 'bullet') marker = formatOutlineMarker('bullet', info.value, state.norm.separator) + " ";
-                                else {
-                                    const counters = computeOutlineCounters(currentLines.slice(0, node.index + 1), []);
-                                    const nextValue = (counters[info.indent] || 0) + 1;
-                                    marker = formatOutlineMarker(getMarkerTypeForDepth(info.indent), nextValue, state.norm.separator) + " ";
-                                }
+                                else marker = formatOutlineMarker(info.type, (info.value || 0) + 1, state.norm.separator) + " ";
                             }
                         } else {
                             nextLineDepth = 0;
@@ -1915,6 +1980,12 @@
         function renderEditorArea() {
             const container = domRefs['editor-container'];
             if (!container) return;
+            const scrollByTabId = new Map(
+                Array.from(container.querySelectorAll('.editor-cell[data-editor-tab]')).map(cell => [
+                    cell.dataset.editorTab,
+                    { top: cell.scrollTop, left: cell.scrollLeft }
+                ])
+            );
             container.innerHTML = '';
             if (state.multiViewIds.length > 1) {
                 const grid = document.createElement('div');
@@ -1939,6 +2010,12 @@
                 const activeTab = state.tabs.find(t => t.id === state.activeTabId);
                 if (activeTab) container.appendChild(createEditorElement(activeTab));
             }
+            container.querySelectorAll('.editor-cell[data-editor-tab]').forEach(cell => {
+                const previous = scrollByTabId.get(cell.dataset.editorTab);
+                if (!previous) return;
+                cell.scrollTop = previous.top;
+                cell.scrollLeft = previous.left;
+            });
             if (state.dragMove) {
                 const badge = document.createElement('div');
                 const movedCount = state.dragMove.end - state.dragMove.start + 1;
@@ -2126,6 +2203,13 @@
             if (type === 'roman-paren') return "(" + (numToRoman(value) || value) + ")";
             if (type === 'roman-lower-paren') return "(" + (numToRoman(value, true) || value) + ")";
             if (type === 'number-paren') return "(" + value + ")";
+            const template = parseOutlineStyleTemplate(type);
+            if (template) {
+                let token = String(value);
+                if (template.kind === 'alpha') token = String.fromCharCode((template.caseMode === 'upper' ? 64 : 96) + value);
+                if (template.kind === 'roman') token = numToRoman(value, template.caseMode === 'lower') || String(value);
+                return `${template.prefix}${token}${template.suffix}`;
+            }
             return '-';
         }
 
@@ -2197,7 +2281,7 @@
 
                 counters.length = info.indent + 1;
                 counters[info.indent] = (counters[info.indent] || 0) + 1;
-                return replaceLineMarker(line, info, info.indent, getMarkerTypeForDepth(info.indent), counters[info.indent]);
+                return replaceLineMarker(line, info, info.indent, info.type, counters[info.indent]);
             });
         }
 
@@ -2214,7 +2298,7 @@
 
                 const nextIndent = Math.max(0, info.indent + delta);
                 if (info.type === 'bullet') return replaceLineMarker(line, info, nextIndent, 'bullet', shiftBulletMarker(info.value, delta > 0 ? 1 : -1));
-                return replaceLineMarker(line, info, nextIndent, getMarkerTypeForDepth(nextIndent), 1);
+                return replaceLineMarker(line, info, nextIndent, info.type, info.value);
             });
         }
 
@@ -2259,9 +2343,7 @@
             if (info.type === 'bullet') {
                 marker = formatOutlineMarker('bullet', info.value, state.norm.separator);
             } else {
-                const countersBefore = getOutlineCountersBefore(text, lineEnd + (lineEnd < text.length ? 1 : 0));
-                const nextValue = (countersBefore[info.indent] || 0) + 1;
-                marker = formatOutlineMarker(getMarkerTypeForDepth(info.indent), nextValue, state.norm.separator);
+                marker = formatOutlineMarker(info.type, (info.value || 0) + 1, state.norm.separator);
             }
             const nextLine = "\n" + "\t".repeat(info.indent) + marker + " ";
             const nextText = text.substring(0, cursor) + nextLine + text.substring(cursor);
@@ -2400,8 +2482,18 @@
 
         function toggleSettings(open) {
             const menu = domRefs['settings-menu'], overlay = domRefs['settings-overlay'];
-            if (open) { menu.classList.add('open'); overlay.classList.remove('hidden'); setTimeout(() => { overlay.style.opacity = "1"; }, 10); }
-            else { menu.classList.remove('open'); overlay.style.opacity = "0"; setTimeout(() => { overlay.classList.add('hidden'); }, 200); }
+            if (!menu || !overlay) return;
+            if (open) {
+                menu.classList.add('open');
+                overlay.classList.remove('hidden');
+                overlay.style.pointerEvents = 'auto';
+                requestAnimationFrame(() => { overlay.style.opacity = "1"; });
+                return;
+            }
+            menu.classList.remove('open');
+            overlay.style.opacity = "0";
+            overlay.style.pointerEvents = 'none';
+            setTimeout(() => { overlay.classList.add('hidden'); }, 200);
         }
 
         function init() {
@@ -2518,9 +2610,9 @@
                 requestRender('editor');
             };
             domRefs['file-input'].onchange = (e) => { Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onload = (ev) => addTab(file.name, ev.target.result); r.readAsText(file); }); e.target.value = ''; };
-            domRefs['open-settings-btn'].onclick = () => toggleSettings(true);
-            domRefs['close-settings-btn'].onclick = () => toggleSettings(false);
-            domRefs['settings-overlay'].onclick = () => toggleSettings(false);
+            domRefs['open-settings-btn'].addEventListener('click', () => toggleSettings(true));
+            domRefs['close-settings-btn'].addEventListener('click', () => toggleSettings(false));
+            domRefs['settings-overlay'].addEventListener('click', () => toggleSettings(false));
             domRefs['toggle-tab-orientation'].onclick = () => mutateState(() => {
                 state.theme.orientation = state.theme.orientation === 'horizontal' ? 'vertical' : 'horizontal';
             }, { render: 'full', save: true });
