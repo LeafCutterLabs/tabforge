@@ -64,11 +64,15 @@
                     </svg>
                 </button>
                 <!-- PRINT ICON -->
-                <button id="print-btn" class="stable-btn hover:bg-white/10" title="Print Current Tab"><i data-lucide="printer" class="w-[18px] h-[18px]"></i></button>
-                <label class="inline-flex items-center gap-1 text-[10px] opacity-80 px-1 whitespace-nowrap" title="Include line numbers when printing">
-                    <input id="print-line-numbers-toggle" type="checkbox" class="w-3.5 h-3.5">
-                    <span>#</span>
-                </label>
+                <div class="print-menu-wrapper relative">
+                    <button id="print-btn" class="stable-btn hover:bg-white/10" title="Print Current Tab"><i data-lucide="printer" class="w-[18px] h-[18px]"></i></button>
+                    <div class="print-options">
+                        <label class="inline-flex items-center gap-2 text-[11px] whitespace-nowrap" title="Include line numbers when printing">
+                            <input id="print-line-numbers-toggle" type="checkbox" class="w-3.5 h-3.5">
+                            <span>Include #</span>
+                        </label>
+                    </div>
+                </div>
             </div>
 
             <div class="h-4 w-px bg-white/20 mx-1"></div>
@@ -123,6 +127,18 @@
                         <circle cx="4" cy="21" r=".5"/>
                         <path d="M9 21h11"/>
                     </svg>
+                </button>
+                <!-- EXPAND ALL ICON -->
+                <button id="outline-expand-all-btn" class="stable-btn transition-all hidden" title="Expand All Outline Sections">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M7 8l5-5 5 5"/>
+                        <path d="M7 16l5 5 5-5"/>
+                        <path d="M12 3v18"/>
+                    </svg>
+                </button>
+                <!-- EXPAND TO LEVEL ICON -->
+                <button id="outline-level-filter-btn" class="stable-btn transition-all hidden" title="Cycle Outline Level Filter">
+                    <span id="outline-level-filter-label" class="text-[10px] font-black leading-none">L1</span>
                 </button>
                 <!-- CLEAR COMPLETED ICON -->
                 <button id="toggle-hide-completed" class="stable-btn transition-all" title="Hide DONE Lines">
@@ -197,6 +213,7 @@
                 <span>Lines: <b id="stat-lines" class="text-current">1</b></span>
                 <span>Words: <b id="stat-words" class="text-current">0</b></span>
                 <span>Chars: <b id="stat-chars" class="text-current">0</b></span>
+                <span id="stat-outline-levels" class="hidden text-accent font-semibold"></span>
             </div>
         </div>
         <div class="flex items-center space-x-4">
@@ -211,69 +228,83 @@
 
     <!-- Settings Overlay -->
     <div id="settings-overlay" class="fixed inset-0 bg-black/40 hidden z-[60] transition-opacity duration-200 opacity-0"></div>
-    <aside id="settings-menu" class="fixed top-0 right-0 h-full w-64 bg-white border-l border-slate-200 z-[70] p-6 shadow-2xl transition-colors overflow-y-auto text-slate-800">
+    <aside id="settings-menu" class="fixed top-0 right-0 h-full bg-white border-l border-slate-200 z-[70] p-6 shadow-2xl transition-colors overflow-y-auto text-slate-800">
         <div class="flex items-center justify-between mb-8">
             <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400">Settings</h2>
             <button id="close-settings-btn" class="p-1 hover:bg-slate-100 rounded text-slate-400"><i data-lucide="x" class="w-4 h-4"></i></button>
         </div>
 
-        <div class="space-y-8">
-            <div>
-                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Interface Theme</label>
-                <div class="grid grid-cols-2 gap-2">
-                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="default">Default</button>
-                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="light">Light</button>
-                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="dark">Dark</button>
-                    <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="matrix">Matrix</button>
+        <div class="settings-grid">
+            <div class="settings-column">
+                <div>
+                    <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Interface Theme</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="default">Default</button>
+                        <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="light">Light</button>
+                        <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="dark">Dark</button>
+                        <button class="mode-btn p-2 border border-slate-200 rounded text-[10px] font-bold uppercase hover:bg-slate-50 transition-colors" data-mode="matrix">Matrix</button>
+                    </div>
                 </div>
-            </div>
 
-            <div>
-                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Accent Color</label>
-                <div class="flex items-center gap-2">
-                    <button id="accent-swatch-btn" type="button" class="swatch-preview border border-slate-300 rounded" title="Choose Accent Color"></button>
-                    <input type="color" id="accent-color-picker" class="sr-only" value="#2563eb">
-                    <div class="flex items-center bg-slate-50 rounded px-2 py-1.5 border border-slate-200 flex-1">
-                    <span class="text-[10px] font-mono text-slate-400 mr-2">#</span>
-                    <input type="text" id="hex-accent" class="bg-transparent border-none outline-none text-xs font-mono w-full text-slate-600" maxlength="6" placeholder="2563eb">
+                <div class="pt-4 border-t border-slate-100">
+                    <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Accent Color</label>
+                    <div class="flex items-center gap-2">
+                        <button id="accent-swatch-btn" type="button" class="swatch-preview border border-slate-300 rounded" title="Choose Accent Color"></button>
+                        <input type="color" id="accent-color-picker" class="sr-only" value="#2563eb">
+                        <div class="flex items-center bg-slate-50 rounded px-2 py-1.5 border border-slate-200 flex-1">
+                            <span class="text-[10px] font-mono text-slate-400 mr-2">#</span>
+                            <input type="text" id="hex-accent" class="bg-transparent border-none outline-none text-xs font-mono w-full text-slate-600" maxlength="6" placeholder="2563eb">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-100">
+                    <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Special Markup Colors</label>
+                    <div class="space-y-2" id="special-color-settings">
+                        <label class="special-color-row"><span>!!</span><input type="color" data-special-color="urgent"></label>
+                        <label class="special-color-row"><span>??</span><input type="color" data-special-color="question"></label>
+                        <label class="special-color-row"><span>--</span><input type="color" data-special-color="defer"></label>
+                        <label class="special-color-row"><span>**</span><input type="color" data-special-color="important"></label>
+                        <label class="special-color-row"><span>DONE</span><input type="color" data-special-color="done"></label>
+                        <label class="special-color-row"><span>@</span><input type="color" data-special-color="mention"></label>
+                        <label class="special-color-row"><span>#</span><input type="color" data-special-color="tag"></label>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-100">
+                    <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Export Preferences</label>
+                    <div class="flex items-center space-x-2">
+                        <input type="checkbox" id="zip-export-toggle" class="w-4 h-4 rounded text-accent focus:ring-accent border-slate-300">
+                        <label for="zip-export-toggle" class="text-xs text-slate-600">Package all exports as .zip</label>
                     </div>
                 </div>
             </div>
 
-            <div class="pt-4 border-t border-slate-100">
-                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Export Preferences</label>
-                <div class="flex items-center space-x-2">
-                    <input type="checkbox" id="zip-export-toggle" class="w-4 h-4 rounded text-accent focus:ring-accent border-slate-300">
-                    <label for="zip-export-toggle" class="text-xs text-slate-600">Package all exports as .zip</label>
+            <div class="settings-column">
+                <div>
+                    <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Outline Levels</label>
+                    <div class="space-y-2" id="outline-levels-settings">
+                        <input type="text" data-level-index="0" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="I.">
+                        <input type="text" data-level-index="1" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="A.">
+                        <input type="text" data-level-index="2" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="1.">
+                        <input type="text" data-level-index="3" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="a.">
+                        <input type="text" data-level-index="4" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="i.">
+                        <input type="text" data-level-index="5" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="(a)">
+                        <input type="text" data-level-index="6" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="(i)">
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-2">Supported formats: I., A., 1., a., i., (A), (a), (I), (i)</p>
                 </div>
-            </div>
 
-            <div class="pt-4 border-t border-slate-100">
-                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Normalization</label>
-                <div class="space-y-4">
-                    <input type="text" id="norm-separator" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder=".">
-                    <div class="bg-slate-50 rounded p-2 border border-slate-200">
-                        <div class="text-[10px] font-mono text-slate-500" id="norm-example">1. Item Content</div>
+                <div class="pt-4 border-t border-slate-100">
+                    <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Normalization</label>
+                    <div class="rounded border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-[11px] text-slate-400">
+                        Normalization presets will live here when this feature returns.
                     </div>
                 </div>
-            </div>
 
-            <div class="pt-4 border-t border-slate-100">
-                <label class="block text-[10px] uppercase font-bold text-slate-500 mb-3">Outline Levels</label>
-                <div class="space-y-2" id="outline-levels-settings">
-                    <input type="text" data-level-index="0" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="I.">
-                    <input type="text" data-level-index="1" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="A.">
-                    <input type="text" data-level-index="2" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="1.">
-                    <input type="text" data-level-index="3" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="a.">
-                    <input type="text" data-level-index="4" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="i.">
-                    <input type="text" data-level-index="5" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="(a)">
-                    <input type="text" data-level-index="6" class="outline-level-input w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs outline-none" placeholder="(i)">
+                <div class="pt-4 border-t border-slate-100">
+                    <button id="reset-theme-btn" class="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-400 rounded text-[10px] font-bold uppercase transition-colors">Restore Defaults</button>
                 </div>
-                <p class="text-[10px] text-slate-400 mt-2">Supported formats: I., A., 1., a., i., (A), (a), (I), (i)</p>
-            </div>
-
-            <div class="pt-4 border-t border-slate-100">
-                <button id="reset-theme-btn" class="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-400 rounded text-[10px] font-bold uppercase transition-colors">Restore Defaults</button>
             </div>
         </div>
     </aside>

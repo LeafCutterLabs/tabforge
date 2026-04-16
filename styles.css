@@ -1,7 +1,7 @@
         :root {
             --editor-lh: 24px;
             --editor-fs: 14px;
-            --gutter-width: 35px;
+            --gutter-width: 42px;
             --text-indent: 8px;
             
             /* TRUE DEFAULT THEME */
@@ -174,8 +174,8 @@
         .token-mention {
             color: inherit;
             font-weight: inherit;
-            background: rgba(14, 165, 233, 0.18);
-            box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.24);
+            background: color-mix(in srgb, var(--token-color, #0ea5e9) 18%, transparent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--token-color, #0ea5e9) 24%, transparent);
             border-radius: 0;
             display: inline-block;
             min-height: var(--editor-lh);
@@ -187,8 +187,8 @@
         .token-tag {
             color: inherit;
             font-weight: inherit;
-            background: rgba(34, 197, 94, 0.18);
-            box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.24);
+            background: color-mix(in srgb, var(--token-color, #22c55e) 18%, transparent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--token-color, #22c55e) 24%, transparent);
             border-radius: 0;
             display: inline-block;
             min-height: var(--editor-lh);
@@ -208,8 +208,38 @@
         }
 
         .outline-row:focus-within {
-            background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-            box-shadow: inset 3px 0 0 var(--accent-color);
+            outline: none;
+            box-shadow: none;
+            position: relative;
+            z-index: 1;
+        }
+
+        .outline-row:focus-within::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border: 1px solid var(--accent-color);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .outline-row.has-row-highlight:focus-within {
+            background: var(--row-highlight-bg, transparent);
+            box-shadow: inset 3px 0 0 var(--row-highlight-accent, transparent);
+            outline: none;
+        }
+
+        .outline-row:focus-within .outline-line {
+            box-shadow: none;
+        }
+
+        .outline-row:focus-within .outline-gutter {
+            box-shadow: none;
+            color: var(--accent-color);
+        }
+
+        .outline-row:focus-within .outline-gutter .line-number-label {
+            box-shadow: none;
         }
 
         .outline-gutter {
@@ -222,13 +252,23 @@
             align-items: center;
             justify-content: flex-end;
             gap: 4px;
-            padding-right: 6px;
+            padding: 0 8px 0 4px;
             position: relative;
             user-select: none;
         }
 
         .outline-gutter.line-selectable {
             cursor: pointer;
+            min-height: var(--editor-lh);
+        }
+
+        .outline-gutter .line-number-label {
+            min-width: 0;
+            display: inline-flex;
+            justify-content: flex-end;
+            align-self: stretch;
+            align-items: center;
+            padding-left: 3px;
         }
 
         .outline-row.revision-changed .outline-gutter::before {
@@ -288,6 +328,29 @@
             box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
         }
 
+        .special-color-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 6px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f8fafc;
+            font-size: 11px;
+            font-weight: 700;
+            color: #475569;
+        }
+
+        .special-color-row input[type="color"] {
+            width: 34px;
+            height: 24px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+        }
+
         #text-transform-group .stable-btn:disabled {
             opacity: 0.45;
             cursor: not-allowed;
@@ -344,8 +407,37 @@
         .tab-title { cursor: pointer; }
         .tab-title.rename-ready { cursor: text; }
 
-        #settings-menu { transform: translateX(100%); transition: transform 0.2s ease-in-out; pointer-events: none; }
+        #settings-menu {
+            width: min(720px, calc(100vw - 32px));
+            transform: translateX(100%);
+            transition: transform 0.2s ease-in-out;
+            pointer-events: none;
+        }
         #settings-menu.open { transform: translateX(0); pointer-events: auto; }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr);
+            gap: 24px;
+            align-items: start;
+        }
+
+        .settings-column {
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+            min-width: 0;
+        }
+
+        @media (max-width: 760px) {
+            #settings-menu {
+                width: min(360px, calc(100vw - 24px));
+            }
+
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+        }
 
         .swatch { width: 1.25rem; height: 1.25rem; cursor: pointer; border-radius: 4px; border: 2px solid transparent; transition: transform 0.1s; }
         .swatch.active { border-color: #cbd5e1; box-shadow: 0 0 0 2px var(--accent-color); transform: scale(1.1); }
@@ -367,6 +459,26 @@
         .stable-btn:disabled {
             opacity: 0.4;
             cursor: default;
+        }
+
+        .print-options {
+            display: none;
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 80;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: var(--bg-ui-dark);
+            color: var(--header-text);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+        }
+
+        .print-menu-wrapper:hover .print-options,
+        .print-options:focus-within {
+            display: flex;
         }
 
         .btn-active {

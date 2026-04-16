@@ -18,8 +18,17 @@
     }
 
     function normalizeThemePayload(payload, fallbackTheme, fallbackNorm, defaultOutlineLevels) {
+        const defaultSpecialColors = fallbackTheme?.specialColors || {};
+        const savedTheme = payload?.theme || fallbackTheme;
         return {
-            theme: payload?.theme || fallbackTheme,
+            theme: {
+                ...fallbackTheme,
+                ...savedTheme,
+                specialColors: {
+                    ...defaultSpecialColors,
+                    ...(savedTheme?.specialColors || {})
+                }
+            },
             norm: {
                 separator: payload?.norm?.separator || fallbackNorm.separator,
                 levels: Array.isArray(payload?.norm?.levels) && payload.norm.levels.length === 7

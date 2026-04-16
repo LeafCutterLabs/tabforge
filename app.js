@@ -13,6 +13,15 @@
             'roman-paren': '(I)'
         };
         const OUTLINE_LABEL_TO_STYLE = Object.fromEntries(Object.entries(OUTLINE_STYLE_LABELS).map(([key, value]) => [value.toLowerCase(), key]));
+        const DEFAULT_SPECIAL_COLORS = {
+            urgent: '#ef4444',
+            question: '#f59e0b',
+            important: '#8b5cf6',
+            defer: '#0ea5e9',
+            done: '#22c55e',
+            mention: '#0ea5e9',
+            tag: '#22c55e'
+        };
         const { createTabRecord, hydrateTabRecord, duplicateTabRecord } = window.TabForgeTabModel;
         const { getStorageKeys, safeParseJSON, normalizeThemePayload, serializeStatePayload } = window.TabForgePersistence;
         const { createTabState, duplicateTabState, closeTabState } = window.TabForgeCommands;
@@ -35,7 +44,7 @@
             preserveSelectionOnFocus: false,
             hoveredLineKey: null,
             search: { open: false, query: '', replace: '', fuzzy: false, results: [], currentIndex: -1 },
-            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false },
+            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } },
             norm: { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] }
         };
 
@@ -58,7 +67,7 @@
         const TYPING_HISTORY_COALESCE_MS = 900;
         const DEBUG_INVARIANTS = false;
 
-        const STORAGE_KEYS = getStorageKeys(55);
+        const STORAGE_KEYS = getStorageKeys(56);
         const STORAGE_KEY_TABS = STORAGE_KEYS.tabs;
         const STORAGE_KEY_ACTIVE = STORAGE_KEYS.active;
         const STORAGE_KEY_THEME = STORAGE_KEYS.theme;
@@ -103,12 +112,16 @@
                 'toggle-zebra',
                 'toggle-word-wrap',
                 'toggle-outline-mode',
+                'outline-expand-all-btn',
+                'outline-level-filter-btn',
+                'outline-level-filter-label',
                 'toggle-tab-orientation',
                 'orient-icon',
                 'status-filename',
                 'stat-lines',
                 'stat-words',
                 'stat-chars',
+                'stat-outline-levels',
                 'stat-time',
                 'toggle-view-mode',
                 'view-mode-icon',
@@ -151,6 +164,7 @@
                 domRefs[id] = document.getElementById(id);
             });
             domRefs.outlineLevelInputs = Array.from(document.querySelectorAll('.outline-level-input'));
+            domRefs.specialColorInputs = Array.from(document.querySelectorAll('[data-special-color]'));
             domRefs.modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
         }
 
@@ -660,7 +674,8 @@
             return Array.from(text.matchAll(/[@#][A-Za-z0-9_.-]+/g)).map(match => ({
                 start: match.index,
                 end: match.index + match[0].length,
-                className: match[0].startsWith('@') ? 'token-mention' : 'token-tag'
+                className: match[0].startsWith('@') ? 'token-mention' : 'token-tag',
+                color: match[0].startsWith('@') ? getSpecialColor('mention') : getSpecialColor('tag')
             }));
         }
 
@@ -694,7 +709,8 @@
                     classes.push('search-hit');
                     if (searchRange.resultIndex === state.search.currentIndex) classes.push('search-hit-current');
                 }
-                html += classes.length ? `<span class="${classes.join(' ')}">${segmentText}</span>` : segmentText;
+                const style = tokenRange ? ` style="--token-color: ${tokenRange.color}"` : '';
+                html += classes.length ? `<span class="${classes.join(' ')}"${style}>${segmentText}</span>` : segmentText;
             }
 
             return html;
@@ -752,13 +768,17 @@
             return `rgba(${Math.round(total.r / count)}, ${Math.round(total.g / count)}, ${Math.round(total.b / count)}, ${alpha})`;
         }
 
+        function getSpecialColor(type) {
+            return state.theme.specialColors?.[type] || DEFAULT_SPECIAL_COLORS[type] || state.theme.accent;
+        }
+
         function getAttentionFlags(rawLine) {
             const flags = [];
-            if (rawLine.includes('!!')) flags.push({ type: 'urgent', color: '#ef4444' });
-            if (rawLine.includes('??')) flags.push({ type: 'question', color: '#f59e0b' });
-            if (rawLine.includes('**')) flags.push({ type: 'important', color: '#8b5cf6' });
-            if (rawLine.includes('--')) flags.push({ type: 'defer', color: '#0ea5e9' });
-            if (/\bDONE\b/.test(rawLine)) flags.push({ type: 'done', color: '#22c55e' });
+            if (rawLine.includes('!!')) flags.push({ type: 'urgent', color: getSpecialColor('urgent') });
+            if (rawLine.includes('??')) flags.push({ type: 'question', color: getSpecialColor('question') });
+            if (rawLine.includes('**')) flags.push({ type: 'important', color: getSpecialColor('important') });
+            if (rawLine.includes('--')) flags.push({ type: 'defer', color: getSpecialColor('defer') });
+            if (/\bDONE\b/.test(rawLine)) flags.push({ type: 'done', color: getSpecialColor('done') });
             return flags;
         }
 
@@ -774,6 +794,21 @@
                 background,
                 accent: colors[0] || accentColor
             };
+        }
+
+        function applyRowHighlight(row, rawLine, extraFlags = []) {
+            if (!row) return;
+            const flags = [...getAttentionFlags(rawLine), ...extraFlags];
+            const highlight = buildRowHighlight(flags);
+            row.classList.remove('attention-question', 'attention-urgent');
+            row.classList.toggle('has-row-highlight', Boolean(highlight));
+            if (highlight) {
+                row.style.setProperty('--row-highlight-bg', highlight.background);
+                row.style.setProperty('--row-highlight-accent', highlight.accent);
+            } else {
+                row.style.removeProperty('--row-highlight-bg');
+                row.style.removeProperty('--row-highlight-accent');
+            }
         }
 
         function getSubtreeEndIndex(lines, startIndex) {
@@ -799,8 +834,11 @@
                 tab?.id || '',
                 tab?.content || '',
                 JSON.stringify(tab?.collapsedLines || []),
+                tab?.outlineModeActive ? 'outline-on' : 'outline-off',
                 tab?.hideCompletedLines ? 'hide-completed' : 'show-completed',
-                state.theme.accent || ''
+                Number.isInteger(tab?.outlineLevelFilter) ? `L${tab.outlineLevelFilter}` : 'all-levels',
+                state.theme.accent || '',
+                JSON.stringify(state.theme.specialColors || {})
             ].join('::');
         }
 
@@ -1336,12 +1374,14 @@
             const visible = [];
             let hiddenDepth = null;
             let followsCollapsedGap = false;
+            const levelFilter = tab.outlineModeActive && Number.isInteger(tab.outlineLevelFilter) ? tab.outlineLevelFilter : null;
 
             for (let i = 0; i < lines.length; i++) {
                 const depth = depths[i];
                 const attentionFlags = getAttentionFlags(lines[i]);
                 const isDone = attentionFlags.some(flag => flag.type === 'done');
                 if (tab.hideCompletedLines && isDone) continue;
+                if (levelFilter && depth + 1 > levelFilter) continue;
                 if (hiddenDepth !== null && depth > hiddenDepth && !hasBlockingAttention(lines[i])) continue;
                 if (hiddenDepth !== null && depth <= hiddenDepth) {
                     hiddenDepth = null;
@@ -1372,6 +1412,43 @@
 
             const result = { lines, visible };
             return setCachedValue(visibleStateCache, cacheKey, result);
+        }
+
+        function getOutlineLevelCounts(tab) {
+            const counts = [];
+            getTabLines(tab).forEach(line => {
+                const info = getSymbolInfo(line);
+                if (!info) return;
+                const level = Math.max(1, info.indent + 1);
+                counts[level - 1] = (counts[level - 1] || 0) + 1;
+            });
+            return counts;
+        }
+
+        function getDeepestOutlineLevel(tab) {
+            const counts = getOutlineLevelCounts(tab);
+            return Math.max(1, counts.length || 1);
+        }
+
+        function expandAllOutlineSections(tabId = state.activeTabId) {
+            const tab = getTabById(tabId);
+            if (!tab) return;
+            tab.collapsedLines = [];
+            tab.outlineLevelFilter = null;
+            invalidateTabCaches(tabId);
+            saveToStorage();
+            requestRender('editor');
+        }
+
+        function cycleOutlineLevelFilter(tabId = state.activeTabId) {
+            const tab = getTabById(tabId);
+            if (!tab) return;
+            const deepest = getDeepestOutlineLevel(tab);
+            const current = Number.isInteger(tab.outlineLevelFilter) ? tab.outlineLevelFilter : 0;
+            tab.outlineLevelFilter = current >= deepest ? 1 : current + 1;
+            invalidateTabCaches(tabId);
+            saveToStorage();
+            requestRender('editor');
         }
 
         function updateTabLines(tabId, lines, focusLineIndex = state.activeLineIndex, caretOffset = 0) {
@@ -1846,13 +1923,10 @@
                 if (state.dragMove && state.dragMove.tabId === tab.id && node.index >= state.dragMove.start && node.index <= state.dragMove.end) {
                     row.classList.add('drag-source');
                 }
-                if (node.rowHighlight) {
-                    row.classList.add('has-row-highlight');
-                    row.style.setProperty('--row-highlight-bg', node.rowHighlight.background);
-                    row.style.setProperty('--row-highlight-accent', node.rowHighlight.accent);
-                }
-                if (node.attentionFlags.some(flag => flag.type === 'question')) row.classList.add('attention-question');
-                if (node.attentionFlags.some(flag => flag.type === 'urgent')) row.classList.add('attention-urgent');
+                applyRowHighlight(row, node.raw, [
+                    ...(node.isCollapsed ? [{ type: 'collapsed-parent', color: state.theme.accent }] : []),
+                    ...(node.followsCollapsedGap ? [{ type: 'collapsed-gap', color: state.theme.accent }] : [])
+                ]);
                 if (node.isCollapsed) row.classList.add('collapsed-parent-highlight');
                 if (node.followsCollapsedGap) row.classList.add('after-collapsed-gap');
                 if ((lines[node.index] || '') !== (savedLines[node.index] || '')) row.classList.add('revision-changed');
@@ -1875,10 +1949,12 @@
                         gutter.appendChild(toggle);
                     }
                     const label = document.createElement('span');
+                    label.className = 'line-number-label';
                     label.textContent = String(node.index + 1);
                     gutter.appendChild(label);
                     gutter.onmousedown = (e) => {
                         e.stopPropagation();
+                        e.preventDefault();
                         state.activeTabId = tab.id;
                         state.activeLineIndex = node.index;
                         if (e.ctrlKey || e.metaKey) {
@@ -1933,6 +2009,10 @@
                 line.onblur = () => {
                     const latestLineText = getDisplayText((getTabLines(getTabById(tab.id))[node.index]) || (line.textContent || ''));
                     setLineDisplayContent(line, latestLineText, false, node.index);
+                    applyRowHighlight(row, "\t".repeat(getLineDepth((getTabLines(getTabById(tab.id))[node.index]) || '')) + latestLineText, [
+                        ...(node.isCollapsed ? [{ type: 'collapsed-parent', color: state.theme.accent }] : []),
+                        ...(node.followsCollapsedGap ? [{ type: 'collapsed-gap', color: state.theme.accent }] : [])
+                    ]);
                 };
 
                 line.onmouseenter = () => {
@@ -1996,8 +2076,13 @@
                         placeCaret(e.currentTarget, sanitizedText.length);
                     }
                     const nextLines = [...getTabLines(getTabById(tab.id))];
-                    nextLines[node.index] = "\t".repeat(node.depth) + sanitizedText;
+                    const nextRawLine = "\t".repeat(node.depth) + sanitizedText;
+                    nextLines[node.index] = nextRawLine;
                     e.currentTarget.classList.toggle('empty', !sanitizedText);
+                    applyRowHighlight(row, nextRawLine, [
+                        ...(node.isCollapsed ? [{ type: 'collapsed-parent', color: state.theme.accent }] : []),
+                        ...(node.followsCollapsedGap ? [{ type: 'collapsed-gap', color: state.theme.accent }] : [])
+                    ]);
                     updateContent(tab.id, nextLines.join('\n'), null, { coalesceTyping: true });
                 };
 
@@ -2117,6 +2202,7 @@
                                 if (!targetLine) return;
                                 targetLine.focus({ preventScroll: true });
                                 placeCaret(targetLine, Math.min(caretOffset, targetLine.textContent.length));
+                                targetLine.scrollIntoView({ block: 'nearest', inline: 'nearest' });
                             });
                             return;
                         }
@@ -2141,6 +2227,18 @@
                         if (collapsedParent && collapsedParent.isCollapsed) {
                             e.preventDefault();
                             toggleCollapsedLine(tab.id, collapsedParent.index);
+                            return;
+                        }
+                        if (node.index > 0 && currentLines.length > 1) {
+                            e.preventDefault();
+                            const nextLines = [...currentLines];
+                            const previousRaw = nextLines[node.index - 1] || '';
+                            const previousPrefix = previousRaw.match(/^\t*/)?.[0] || '';
+                            const previousText = getDisplayText(previousRaw);
+                            const mergedText = previousText + currentText;
+                            nextLines[node.index - 1] = previousPrefix + mergedText;
+                            nextLines.splice(node.index, 1);
+                            updateTabLines(tab.id, nextLines, node.index - 1, previousText.length);
                             return;
                         }
                     }
@@ -2261,12 +2359,35 @@
             const chars = content.length;
             const lines = getCachedLines(content, `${t.id}:stats`).length;
             const readTime = Math.ceil(words / 200) || 1;
+            const outlineCounts = getOutlineLevelCounts(t);
 
             domRefs['status-filename'].innerText = t.title;
             domRefs['stat-lines'].innerText = lines;
             domRefs['stat-words'].innerText = words;
             domRefs['stat-chars'].innerText = chars;
             domRefs['stat-time'].innerText = readTime + "m";
+            if (domRefs['stat-outline-levels']) {
+                const outlineText = outlineCounts
+                    .map((count, index) => count ? `L${index + 1}:${count}` : '')
+                    .filter(Boolean)
+                    .join(' ');
+                domRefs['stat-outline-levels'].textContent = t.outlineModeActive && outlineText ? outlineText : '';
+                domRefs['stat-outline-levels'].classList.toggle('hidden', !(t.outlineModeActive && outlineText));
+            }
+
+            const expandAllBtn = domRefs['outline-expand-all-btn'];
+            const levelFilterBtn = domRefs['outline-level-filter-btn'];
+            const levelFilterLabel = domRefs['outline-level-filter-label'];
+            if (expandAllBtn && levelFilterBtn && levelFilterLabel) {
+                expandAllBtn.classList.toggle('hidden', !t.outlineModeActive);
+                levelFilterBtn.classList.toggle('hidden', !t.outlineModeActive);
+                const hasLevelFilter = Number.isInteger(t.outlineLevelFilter);
+                const currentLevel = hasLevelFilter ? t.outlineLevelFilter : getDeepestOutlineLevel(t);
+                levelFilterLabel.textContent = hasLevelFilter ? `L${currentLevel}` : 'All';
+                levelFilterBtn.title = hasLevelFilter
+                    ? `Showing outline through level ${currentLevel}. Click to cycle.`
+                    : 'Showing all outline levels. Click to cycle.';
+            }
 
             const mvBtn = domRefs['toggle-view-mode'];
             if (state.multiViewIds.length > 1) {
@@ -2658,9 +2779,13 @@
             domRefs['hex-accent'].value = accent.replace('#', '');
             if (domRefs['accent-color-picker']) domRefs['accent-color-picker'].value = accent;
             if (domRefs['accent-swatch-btn']) domRefs['accent-swatch-btn'].style.backgroundColor = accent;
-            domRefs['norm-separator'].value = state.norm.separator;
+            if (domRefs['norm-separator']) domRefs['norm-separator'].value = state.norm.separator;
             domRefs.outlineLevelInputs.forEach((input, index) => {
                 input.value = getOutlineStyleLabel(getOutlineLevels()[index] || DEFAULT_OUTLINE_LEVELS[index]);
+            });
+            domRefs.specialColorInputs.forEach(input => {
+                const type = input.dataset.specialColor;
+                input.value = getSpecialColor(type);
             });
             domRefs.modeButtons.forEach(btn => {
                 const isActive = btn.dataset.mode === mode;
@@ -2922,10 +3047,23 @@
                 }, { save: true });
             };
             domRefs['zip-export-toggle'].onchange = (e) => mutateState(() => { state.theme.zipExport = e.target.checked; }, { save: true, render: 'toolbar' });
-            domRefs['norm-separator'].oninput = (e) => mutateState(() => {
-                state.norm.separator = e.target.value;
-                applyTheme();
-            }, { save: true });
+            if (domRefs['norm-separator']) {
+                domRefs['norm-separator'].oninput = (e) => mutateState(() => {
+                    state.norm.separator = e.target.value;
+                    applyTheme();
+                }, { save: true });
+            }
+            domRefs.specialColorInputs.forEach(input => {
+                input.oninput = (e) => mutateState(() => {
+                    state.theme.specialColors = {
+                        ...DEFAULT_SPECIAL_COLORS,
+                        ...(state.theme.specialColors || {}),
+                        [e.target.dataset.specialColor]: e.target.value
+                    };
+                    applyTheme();
+                    invalidateSearchCache();
+                }, { render: 'editor', save: true });
+            });
             domRefs.outlineLevelInputs.forEach(input => {
                 input.onchange = (e) => {
                     const index = Number(e.target.dataset.levelIndex);
@@ -2938,7 +3076,7 @@
                 };
             });
             domRefs['reset-theme-btn'].onclick = () => mutateState(() => {
-                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false };
+                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
                 state.norm = { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] };
                 applyTheme();
             }, { save: true });
@@ -2958,6 +3096,8 @@
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.outlineModeActive = !t.outlineModeActive; }, { render: 'editor', save: true });
             };
+            domRefs['outline-expand-all-btn'].onclick = () => expandAllOutlineSections(state.activeTabId);
+            domRefs['outline-level-filter-btn'].onclick = () => cycleOutlineLevelFilter(state.activeTabId);
             domRefs['toggle-hide-completed'].onclick = () => {
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.hideCompletedLines = !t.hideCompletedLines; }, { render: 'editor', save: true });
