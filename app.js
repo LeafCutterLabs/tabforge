@@ -44,7 +44,7 @@
             preserveSelectionOnFocus: false,
             hoveredLineKey: null,
             search: { open: false, query: '', replace: '', fuzzy: false, results: [], currentIndex: -1 },
-            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } },
+            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } },
             norm: { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] }
         };
 
@@ -65,6 +65,8 @@
         const SAVE_DEBOUNCE_MS = 120;
         const MAX_CACHE_ENTRIES = 300;
         const TYPING_HISTORY_COALESCE_MS = 900;
+        const MARKER_SCROLL_MIN_THUMB_PX = 24;
+        const MARKER_SCROLL_MIN_VISIBLE_RATIO = 0.08;
         const DEBUG_INVARIANTS = false;
 
         const STORAGE_KEYS = getStorageKeys(56);
@@ -112,11 +114,10 @@
                 'toggle-zebra',
                 'toggle-word-wrap',
                 'toggle-outline-mode',
-                'outline-expand-all-btn',
                 'outline-level-filter-btn',
                 'outline-level-filter-label',
-                'toggle-tab-orientation',
-                'orient-icon',
+                'tabs-top-btn',
+                'tabs-side-btn',
                 'status-filename',
                 'stat-lines',
                 'stat-words',
@@ -141,6 +142,7 @@
                 'import-btn',
                 'export-tab-btn',
                 'export-all-btn',
+                'copy-view-btn',
                 'find-next-btn',
                 'replace-btn',
                 'replace-all-btn',
@@ -779,6 +781,19 @@
             if (rawLine.includes('**')) flags.push({ type: 'important', color: getSpecialColor('important') });
             if (rawLine.includes('--')) flags.push({ type: 'defer', color: getSpecialColor('defer') });
             if (/\bDONE\b/.test(rawLine)) flags.push({ type: 'done', color: getSpecialColor('done') });
+            return flags;
+        }
+
+        function getMarkerFlagsForLine(rawLine) {
+            const flags = [...getAttentionFlags(rawLine)];
+            const displayText = getDisplayText(rawLine);
+            const tokens = collectTokenRanges(displayText);
+            if (tokens.some(token => token.className === 'token-mention')) {
+                flags.push({ type: 'mention', color: getSpecialColor('mention') });
+            }
+            if (tokens.some(token => token.className === 'token-tag')) {
+                flags.push({ type: 'tag', color: getSpecialColor('tag') });
+            }
             return flags;
         }
 
@@ -1430,22 +1445,18 @@
             return Math.max(1, counts.length || 1);
         }
 
-        function expandAllOutlineSections(tabId = state.activeTabId) {
-            const tab = getTabById(tabId);
-            if (!tab) return;
-            tab.collapsedLines = [];
-            tab.outlineLevelFilter = null;
-            invalidateTabCaches(tabId);
-            saveToStorage();
-            requestRender('editor');
-        }
-
         function cycleOutlineLevelFilter(tabId = state.activeTabId) {
             const tab = getTabById(tabId);
             if (!tab) return;
             const deepest = getDeepestOutlineLevel(tab);
-            const current = Number.isInteger(tab.outlineLevelFilter) ? tab.outlineLevelFilter : 0;
-            tab.outlineLevelFilter = current >= deepest ? 1 : current + 1;
+            if (!Number.isInteger(tab.outlineLevelFilter)) {
+                tab.outlineLevelFilter = 1;
+            } else if (tab.outlineLevelFilter >= deepest) {
+                tab.outlineLevelFilter = null;
+                tab.collapsedLines = [];
+            } else {
+                tab.outlineLevelFilter += 1;
+            }
             invalidateTabCaches(tabId);
             saveToStorage();
             requestRender('editor');
@@ -1902,9 +1913,179 @@
             requestRender('full');
         }
 
+        async function copyTextToClipboard(text) {
+            if (navigator.clipboard?.writeText && window.isSecureContext) {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                } catch (error) {
+                    console.warn('Clipboard API unavailable, falling back to textarea copy', error);
+                }
+            }
+
+            const helper = document.createElement('textarea');
+            helper.value = text;
+            helper.setAttribute('readonly', '');
+            helper.style.position = 'fixed';
+            helper.style.top = '-9999px';
+            helper.style.left = '-9999px';
+            document.body.appendChild(helper);
+            helper.select();
+            const copied = document.execCommand('copy');
+            helper.remove();
+            if (!copied) throw new Error('Browser copy command was rejected.');
+            return copied;
+        }
+
+        async function copyCurrentView() {
+            const tab = getActiveTab();
+            if (!tab) return;
+            const { visible } = getVisibleLineState(tab);
+            const text = visible.map(node => node.raw).join('\n');
+            try {
+                await copyTextToClipboard(text);
+                if (domRefs['save-status']) domRefs['save-status'].innerText = `Copied ${visible.length} visible line${visible.length === 1 ? '' : 's'}`;
+                window.setTimeout(() => requestRender('toolbar'), 1400);
+            } catch (error) {
+                console.warn('Copy current view failed', error);
+                if (domRefs['save-status']) domRefs['save-status'].innerText = 'Copy failed';
+            }
+        }
+
+        function buildMarkerRail(tab, shell) {
+            const lines = getTabLines(tab);
+            const wrap = shell.querySelector('.editor-cell');
+            const markers = lines
+                .map((raw, index) => ({ index, raw, flags: getMarkerFlagsForLine(raw) }))
+                .filter(marker => marker.flags.length);
+
+            // This rail replaces the native scrollbar visuals so markers and thumb share exact geometry.
+            const rail = document.createElement('div');
+            rail.className = 'marker-rail';
+            rail.setAttribute('aria-label', 'Document marker minimap');
+            rail.onclick = (event) => {
+                if (!wrap || event.target !== rail) return;
+                const rect = rail.getBoundingClientRect();
+                const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+                wrap.scrollTop = ratio * Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+            };
+            markers.forEach(marker => {
+                const tick = document.createElement('button');
+                const colors = marker.flags.map(flag => flag.color);
+                const top = lines.length <= 1 ? 0 : (marker.index / (lines.length - 1)) * 100;
+                tick.type = 'button';
+                tick.className = 'marker-tick';
+                tick.style.top = `${Math.max(0, Math.min(100, top))}%`;
+                tick.style.background = colors.length > 1
+                    ? `linear-gradient(90deg, ${colors.join(', ')})`
+                    : colors[0];
+                tick.title = `Line ${marker.index + 1}: ${getDisplayText(marker.raw).slice(0, 80) || '(blank)'}`;
+                tick.onclick = (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    revealLineFromMarker(tab.id, marker.index);
+                };
+                rail.appendChild(tick);
+            });
+            const thumb = document.createElement('div');
+            thumb.className = 'marker-scroll-thumb';
+            thumb.title = 'Scroll position';
+            rail.appendChild(thumb);
+            shell.appendChild(rail);
+            if (wrap) {
+                const updateThumb = () => updateMarkerScrollThumb(wrap, thumb);
+                wrap.addEventListener('scroll', updateThumb, { passive: true });
+                requestAnimationFrame(updateThumb);
+                enableMarkerThumbDrag(wrap, rail, thumb);
+            }
+        }
+
+        function updateMarkerScrollThumb(wrap, thumb) {
+            const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+            const railHeight = thumb.parentElement?.clientHeight || 0;
+            if (!railHeight) return;
+            if (maxScroll <= 0) {
+                thumb.style.display = 'none';
+                return;
+            }
+            thumb.style.display = 'block';
+            const visibleRatio = Math.max(MARKER_SCROLL_MIN_VISIBLE_RATIO, Math.min(1, wrap.clientHeight / wrap.scrollHeight));
+            const thumbHeight = Math.max(MARKER_SCROLL_MIN_THUMB_PX, railHeight * visibleRatio);
+            const travel = Math.max(0, railHeight - thumbHeight);
+            const top = travel * (wrap.scrollTop / maxScroll);
+            thumb.style.height = `${thumbHeight}px`;
+            thumb.style.transform = `translateY(${top}px)`;
+        }
+
+        function enableMarkerThumbDrag(wrap, rail, thumb) {
+            thumb.onmousedown = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const startY = event.clientY;
+                const startTop = wrap.scrollTop;
+                const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+                const thumbHeight = thumb.offsetHeight || 1;
+                const travel = Math.max(1, rail.clientHeight - thumbHeight);
+                const onMove = (moveEvent) => {
+                    const delta = moveEvent.clientY - startY;
+                    wrap.scrollTop = startTop + (delta / travel) * maxScroll;
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            };
+        }
+
+        function revealLineFromMarker(tabId, lineIndex) {
+            const tab = getTabById(tabId);
+            if (!tab) return;
+            const lines = getTabLines(tab);
+            if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+            let changed = false;
+            const collapsed = getCollapsedLineSet(tab);
+            [...collapsed].forEach(parentIndex => {
+                if (parentIndex < lineIndex && getSubtreeEndIndex(lines, parentIndex) >= lineIndex) {
+                    collapsed.delete(parentIndex);
+                    changed = true;
+                }
+            });
+            tab.collapsedLines = [...collapsed].sort((a, b) => a - b);
+
+            const targetDepth = getLineDepth(lines[lineIndex]);
+            if (Number.isInteger(tab.outlineLevelFilter) && targetDepth + 1 > tab.outlineLevelFilter) {
+                tab.outlineLevelFilter = null;
+                changed = true;
+            }
+            if (tab.hideCompletedLines && getAttentionFlags(lines[lineIndex]).some(flag => flag.type === 'done')) {
+                tab.hideCompletedLines = false;
+                changed = true;
+            }
+
+            state.activeTabId = tabId;
+            state.activeLineIndex = lineIndex;
+            state.pendingCaret = { tabId, lineIndex, offset: 0 };
+            if (changed) {
+                invalidateTabCaches(tabId);
+                saveToStorage();
+            }
+            requestRender('editor', { immediate: true });
+            requestAnimationFrame(() => {
+                const targetLine = getLineEditor(tabId, lineIndex);
+                if (!targetLine) return;
+                targetLine.focus({ preventScroll: true });
+                targetLine.scrollIntoView({ block: 'center', inline: 'nearest' });
+            });
+        }
+
         function createEditorElement(tab) {
+            const shell = document.createElement('div');
+            shell.className = "flex-1 relative h-full min-w-0 editor-shell";
             const wrap = document.createElement('div');
-            wrap.className = "flex-1 overflow-auto relative h-full editor-cell";
+            wrap.className = "overflow-auto relative h-full w-full editor-cell";
             wrap.dataset.editorTab = tab.id;
             if (tab.showWordWrap) wrap.classList.add('word-wrap-enabled');
             const root = document.createElement('div');
@@ -2270,7 +2451,9 @@
             });
 
             wrap.appendChild(root);
-            return wrap;
+            shell.appendChild(wrap);
+            buildMarkerRail(tab, shell);
+            return shell;
         }
 
         function renderEditorArea() {
@@ -2342,16 +2525,9 @@
                 }
             });
 
-            const orientBtn = domRefs['toggle-tab-orientation'];
             const isVertical = state.theme.orientation === 'vertical';
-            const orientIcon = domRefs['orient-icon'];
-            if (isVertical) {
-                orientBtn.classList.add('btn-active');
-                orientIcon.innerHTML = `<rect x="10" y="4" width="10" height="16" rx="1" fill="none" stroke="currentColor"/><rect x="4" y="6" width="4" height="3" rx="0.5" fill="currentColor"/><rect x="4" y="10" width="4" height="3" rx="0.5" fill="currentColor"/><rect x="4" y="14" width="4" height="3" rx="0.5" fill="currentColor"/>`;
-            } else {
-                orientBtn.classList.remove('btn-active');
-                orientIcon.innerHTML = `<rect x="4" y="10" width="16" height="10" rx="1" fill="none" stroke="currentColor"/><rect x="6" y="4" width="3" height="4" rx="0.5" fill="currentColor"/><rect x="10" y="4" width="3" height="4" rx="0.5" fill="currentColor"/><rect x="14" y="4" width="3" height="4" rx="0.5" fill="currentColor"/>`;
-            }
+            domRefs['tabs-top-btn']?.classList.toggle('orientation-active', !isVertical);
+            domRefs['tabs-side-btn']?.classList.toggle('orientation-active', isVertical);
 
             // Stats Update
             const content = t.content;
@@ -2375,18 +2551,16 @@
                 domRefs['stat-outline-levels'].classList.toggle('hidden', !(t.outlineModeActive && outlineText));
             }
 
-            const expandAllBtn = domRefs['outline-expand-all-btn'];
             const levelFilterBtn = domRefs['outline-level-filter-btn'];
             const levelFilterLabel = domRefs['outline-level-filter-label'];
-            if (expandAllBtn && levelFilterBtn && levelFilterLabel) {
-                expandAllBtn.classList.toggle('hidden', !t.outlineModeActive);
+            if (levelFilterBtn && levelFilterLabel) {
                 levelFilterBtn.classList.toggle('hidden', !t.outlineModeActive);
                 const hasLevelFilter = Number.isInteger(t.outlineLevelFilter);
-                const currentLevel = hasLevelFilter ? t.outlineLevelFilter : getDeepestOutlineLevel(t);
+                const currentLevel = hasLevelFilter ? t.outlineLevelFilter : null;
                 levelFilterLabel.textContent = hasLevelFilter ? `L${currentLevel}` : 'All';
                 levelFilterBtn.title = hasLevelFilter
                     ? `Showing outline through level ${currentLevel}. Click to cycle.`
-                    : 'Showing all outline levels. Click to cycle.';
+                    : 'Showing all outline levels expanded. Click to show Level 1 only.';
             }
 
             const mvBtn = domRefs['toggle-view-mode'];
@@ -2419,6 +2593,9 @@
             });
 
             domRefs['zip-export-toggle'].checked = state.theme.zipExport;
+            if (domRefs['print-line-numbers-toggle']) {
+                domRefs['print-line-numbers-toggle'].checked = Boolean(state.theme.printLineNumbers);
+            }
             
             lucide.createIcons();
         }
@@ -2750,7 +2927,7 @@
         function printCurrentTab() {
             const tab = getActiveTab();
             if (!tab) return;
-            const includeLineNumbers = Boolean(domRefs['print-line-numbers-toggle']?.checked);
+            const includeLineNumbers = Boolean(state.theme.printLineNumbers);
             const lines = getTabLines(tab);
             const content = lines.map((line, index) => {
                 const text = escapeHtml(line.replace(/\t/g, '    '));
@@ -2789,9 +2966,7 @@
             });
             domRefs.modeButtons.forEach(btn => {
                 const isActive = btn.dataset.mode === mode;
-                btn.style.backgroundColor = isActive ? accent : 'transparent';
-                btn.style.color = isActive ? 'white' : 'inherit';
-                btn.style.borderColor = isActive ? accent : 'var(--border-color)';
+                btn.classList.toggle('theme-mode-active', isActive);
             });
             requestRender('full');
         }
@@ -2981,6 +3156,7 @@
             domRefs['manual-save-all-btn'].onclick = () => markManualSaveAll();
             domRefs['restore-save-btn'].onclick = () => restoreLastManualSave(state.activeTabId);
             domRefs['export-all-btn'].onclick = () => exportAll();
+            domRefs['copy-view-btn'].onclick = () => copyCurrentView();
             domRefs['print-btn'].onclick = () => printCurrentTab();
             domRefs['find-next-btn'].onclick = () => goToSearchResult(state.search.currentIndex + 1);
             domRefs['find-input'].oninput = (e) => {
@@ -3017,8 +3193,11 @@
             domRefs['open-settings-btn'].addEventListener('click', () => toggleSettings(true));
             domRefs['close-settings-btn'].addEventListener('click', () => toggleSettings(false));
             domRefs['settings-overlay'].addEventListener('click', () => toggleSettings(false));
-            domRefs['toggle-tab-orientation'].onclick = () => mutateState(() => {
-                state.theme.orientation = state.theme.orientation === 'horizontal' ? 'vertical' : 'horizontal';
+            domRefs['tabs-top-btn'].onclick = () => mutateState(() => {
+                state.theme.orientation = 'horizontal';
+            }, { render: 'full', save: true });
+            domRefs['tabs-side-btn'].onclick = () => mutateState(() => {
+                state.theme.orientation = 'vertical';
             }, { render: 'full', save: true });
             domRefs['toggle-view-mode'].onclick = () => mutateState(() => {
                 const modes = ['vert', 'horiz', 'card'];
@@ -3047,6 +3226,9 @@
                 }, { save: true });
             };
             domRefs['zip-export-toggle'].onchange = (e) => mutateState(() => { state.theme.zipExport = e.target.checked; }, { save: true, render: 'toolbar' });
+            domRefs['print-line-numbers-toggle'].onchange = (e) => mutateState(() => {
+                state.theme.printLineNumbers = e.target.checked;
+            }, { save: true, render: 'toolbar' });
             if (domRefs['norm-separator']) {
                 domRefs['norm-separator'].oninput = (e) => mutateState(() => {
                     state.norm.separator = e.target.value;
@@ -3076,7 +3258,7 @@
                 };
             });
             domRefs['reset-theme-btn'].onclick = () => mutateState(() => {
-                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
+                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
                 state.norm = { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] };
                 applyTheme();
             }, { save: true });
@@ -3096,7 +3278,6 @@
                 const t = getActiveTab(); if (!t) return;
                 mutateState(() => { t.outlineModeActive = !t.outlineModeActive; }, { render: 'editor', save: true });
             };
-            domRefs['outline-expand-all-btn'].onclick = () => expandAllOutlineSections(state.activeTabId);
             domRefs['outline-level-filter-btn'].onclick = () => cycleOutlineLevelFilter(state.activeTabId);
             domRefs['toggle-hide-completed'].onclick = () => {
                 const t = getActiveTab(); if (!t) return;
