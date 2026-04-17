@@ -14,14 +14,23 @@
         };
         const OUTLINE_LABEL_TO_STYLE = Object.fromEntries(Object.entries(OUTLINE_STYLE_LABELS).map(([key, value]) => [value.toLowerCase(), key]));
         const DEFAULT_SPECIAL_COLORS = {
-            urgent: '#ef4444',
-            question: '#f59e0b',
-            important: '#8b5cf6',
-            defer: '#0ea5e9',
-            done: '#22c55e',
-            mention: '#0ea5e9',
-            tag: '#22c55e'
+            urgent: '#E11900',
+            question: '#FF8A00',
+            defer: '#00B8FF',
+            important: '#7A3CFF',
+            done: '#00B84D',
+            mention: '#0057FF',
+            tag: '#FFD400'
         };
+        const DEFAULT_THEME_ACCENTS = {
+            default: '#2563eb',
+            light: '#2563eb',
+            dark: '#2563eb',
+            matrix: '#16A34A'
+        };
+        function getDefaultAccentForTheme(mode = 'default') {
+            return DEFAULT_THEME_ACCENTS[mode] || DEFAULT_THEME_ACCENTS.default;
+        }
         const { createTabRecord, hydrateTabRecord, duplicateTabRecord } = window.TabForgeTabModel;
         const { getStorageKeys, safeParseJSON, normalizeThemePayload, serializeStatePayload } = window.TabForgePersistence;
         const { createTabState, duplicateTabState, closeTabState } = window.TabForgeCommands;
@@ -167,6 +176,7 @@
             });
             domRefs.outlineLevelInputs = Array.from(document.querySelectorAll('.outline-level-input'));
             domRefs.specialColorInputs = Array.from(document.querySelectorAll('[data-special-color]'));
+            domRefs.specialColorHexInputs = Array.from(document.querySelectorAll('[data-special-color-hex]'));
             domRefs.modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
         }
 
@@ -2949,8 +2959,22 @@
         }
 
         function applyTheme() {
-            const root = document.documentElement; const { accent, mode } = state.theme;
-            root.style.setProperty('--accent-color', accent);
+            const root = document.documentElement;
+            const body = document.body;
+            const { accent, mode } = state.theme;
+            const defaultAccent = getDefaultAccentForTheme(mode);
+            if (accent && accent.toLowerCase() !== defaultAccent.toLowerCase()) {
+                body.style.setProperty('--accent-color', accent);
+            } else {
+                body.style.removeProperty('--accent-color');
+            }
+            body.style.setProperty('--special-urgent', getSpecialColor('urgent'));
+            body.style.setProperty('--special-question', getSpecialColor('question'));
+            body.style.setProperty('--special-defer', getSpecialColor('defer'));
+            body.style.setProperty('--special-important', getSpecialColor('important'));
+            body.style.setProperty('--special-done', getSpecialColor('done'));
+            body.style.setProperty('--special-mention', getSpecialColor('mention'));
+            body.style.setProperty('--special-tag', getSpecialColor('tag'));
             document.body.classList.remove('theme-light', 'theme-dark', 'theme-matrix');
             if (mode !== 'default') document.body.classList.add('theme-' + mode);
             domRefs['hex-accent'].value = accent.replace('#', '');
@@ -2963,6 +2987,10 @@
             domRefs.specialColorInputs.forEach(input => {
                 const type = input.dataset.specialColor;
                 input.value = getSpecialColor(type);
+            });
+            domRefs.specialColorHexInputs.forEach(input => {
+                const type = input.dataset.specialColorHex;
+                input.value = getSpecialColor(type).replace('#', '').toUpperCase();
             });
             domRefs.modeButtons.forEach(btn => {
                 const isActive = btn.dataset.mode === mode;
@@ -3205,7 +3233,9 @@
             }, { render: 'full', save: true });
             domRefs.modeButtons.forEach(btn => {
                 btn.onclick = () => mutateState(() => {
-                    state.theme.mode = btn.dataset.mode;
+                    const nextMode = btn.dataset.mode;
+                    state.theme.mode = nextMode;
+                    state.theme.accent = getDefaultAccentForTheme(nextMode);
                     applyTheme();
                 }, { save: true });
             });
@@ -3245,6 +3275,21 @@
                     applyTheme();
                     invalidateSearchCache();
                 }, { render: 'editor', save: true });
+            });
+            domRefs.specialColorHexInputs.forEach(input => {
+                input.oninput = (e) => {
+                    const raw = String(e.target.value || '').trim().replace(/^#/, '');
+                    if (!/^[0-9A-Fa-f]{6}$/.test(raw)) return;
+                    mutateState(() => {
+                        state.theme.specialColors = {
+                            ...DEFAULT_SPECIAL_COLORS,
+                            ...(state.theme.specialColors || {}),
+                            [e.target.dataset.specialColorHex]: `#${raw.toUpperCase()}`
+                        };
+                        applyTheme();
+                        invalidateSearchCache();
+                    }, { render: 'editor', save: true });
+                };
             });
             domRefs.outlineLevelInputs.forEach(input => {
                 input.onchange = (e) => {
