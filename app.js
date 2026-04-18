@@ -152,6 +152,7 @@
                 'save-status',
                 'open-find-btn',
                 'zip-export-toggle',
+                'date-time-export-toggle',
                 'hex-accent',
                 'norm-separator',
                 'file-input',
@@ -2636,11 +2637,20 @@
             });
 
             domRefs['zip-export-toggle'].checked = state.theme.zipExport;
+            domRefs['date-time-export-toggle'].checked = state.theme.dateTimeExport;
             if (domRefs['print-line-numbers-toggle']) {
                 domRefs['print-line-numbers-toggle'].checked = Boolean(state.theme.printLineNumbers);
             }
             
             lucide.createIcons();
+        }
+
+        function getExportFilename(baseName) {
+            if (state.theme.dateTimeExport) {
+                const dateStr = new Date().toISOString();
+                return baseName + '_' + dateStr;
+            }
+            return baseName;
         }
 
         function triggerDownload(filename, content) {
@@ -2660,13 +2670,13 @@
                 const zip = new JSZip();
                 state.tabs.forEach(tab => {
                     const name = tab.title.endsWith('.txt') ? tab.title : tab.title + '.txt';
-                    zip.file(name, tab.content);
+                    zip.file(getExportFilename(name), tab.content);
                 });
                 const blob = await zip.generateAsync({ type: "blob" });
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = "tabForge_Export.zip";
+                a.download = getExportFilename("tabForge_Export") + ".zip";
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -2674,7 +2684,7 @@
             } else {
                 state.tabs.forEach((tab, index) => {
                     setTimeout(() => {
-                        triggerDownload(tab.title, tab.content);
+                        triggerDownload(getExportFilename(tab.title), tab.content);
                     }, index * 200);
                 });
             }
@@ -3223,7 +3233,7 @@
             if (domRefs['export-tab-btn']) domRefs['export-tab-btn'].onclick = () => {
                 const t = state.tabs.find(x => x.id === state.activeTabId);
                 if (t) {
-                    triggerDownload(t.title, t.content);
+                    triggerDownload(getExportFilename(t.title), t.content);
                     markManualSave(t.id);
                 }
             };
@@ -3321,6 +3331,7 @@
                 }, { save: true });
             };
             domRefs['zip-export-toggle'].onchange = (e) => mutateState(() => { state.theme.zipExport = e.target.checked; }, { save: true, render: 'toolbar' });
+            domRefs['date-time-export-toggle'].onchange = (e) => mutateState(() => { state.theme.dateTimeExport = e.target.checked; }, { save: true, render: 'toolbar' });
             domRefs['print-line-numbers-toggle'].onchange = (e) => mutateState(() => {
                 state.theme.printLineNumbers = e.target.checked;
             }, { save: true, render: 'toolbar' });
@@ -3368,7 +3379,7 @@
                 };
             });
             domRefs['reset-theme-btn'].onclick = () => mutateState(() => {
-                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
+                state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, dateTimeExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
                 state.norm = { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] };
                 applyTheme();
             }, { save: true });
