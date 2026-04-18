@@ -385,7 +385,17 @@
         }
 
         function getOutlineLevels() {
-            return Array.isArray(state.norm.levels) && state.norm.levels.length ? state.norm.levels : [...DEFAULT_OUTLINE_LEVELS];
+            return [...DEFAULT_OUTLINE_LEVELS];
+        }
+
+        function getOutlineLabelForDepth(depth) {
+            const style = getOutlineLevels()[Math.max(0, depth)] || DEFAULT_OUTLINE_LEVELS[Math.max(0, depth) % DEFAULT_OUTLINE_LEVELS.length];
+            return getOutlineStyleLabel(style);
+        }
+
+        function getOutlineSeedTokenForDepth(depth) {
+            const label = getOutlineLabelForDepth(depth);
+            return label.replace(/[.()]/g, '');
         }
 
         function getOutlineStyleLabel(style) {
@@ -402,6 +412,11 @@
         function parseOutlineStyleTemplate(style) {
             const sample = String(style || '');
             if (!sample.trim()) return null;
+
+            const angleMatch = sample.match(/^<(.+)>$/);
+            if (angleMatch) {
+                return { kind: 'angle', caseMode: 'upper', prefix: '<', suffix: '>' };
+            }
 
             const parenMatch = sample.match(/^([^A-Za-z0-9]*)(\(?)([A-Za-z0-9]+)(\)?)([^A-Za-z0-9]*)$/);
             if (!parenMatch) return null;
@@ -2200,7 +2215,7 @@
                 line.spellcheck = true;
                 line.dataset.tabLine = `${tab.id}:${node.index}`;
                 line.dataset.lineIndex = String(node.index);
-                line.className = "outline-line" + (node.text ? "" : " empty");
+                    line.className = "outline-line" + (node.text ? "" : " empty");
                 line.style.paddingLeft = `calc(${node.depth} * 20px + var(--text-indent))`;
                 setLineDisplayContent(line, node.text, false, node.index);
                 applyIndentGuides(line, node.depth);
@@ -2338,10 +2353,10 @@
                 };
 
                 line.onkeydown = (e) => {
-                    const currentLines = getTabLines(getTabById(tab.id));
-                    const currentText = e.currentTarget.textContent;
-                    const caretOffset = getCaretOffset(e.currentTarget);
-                    state.activeLineIndex = node.index;
+                const currentLines = getTabLines(getTabById(tab.id));
+                const currentText = e.currentTarget.textContent;
+                const caretOffset = getCaretOffset(e.currentTarget);
+                state.activeLineIndex = node.index;
 
                     if (e.key === 'Tab') {
                         e.preventDefault();
@@ -2388,9 +2403,27 @@
                         let nextLineDepth = node.depth;
                         if (tab.outlineModeActive && !state.tempOutlineDisabled) {
                             const info = getSymbolInfo(currentLines[node.index]);
-                            if (info) {
-                                if (info.type === 'bullet') marker = formatOutlineMarker('bullet', info.value, state.norm.separator) + " ";
-                                else marker = formatOutlineMarker(info.type, (info.value || 0) + 1, state.norm.separator) + " ";
+                            const isBlank = !currentText.trim();
+                            const prevBlank = node.index > 0 && !getDisplayText(currentLines[node.index - 1]).trim();
+                            const isListItem = Boolean(info) && !isBlank;
+
+                            if (isListItem) {
+                                if (info.type === 'bullet') {
+                                    marker = formatOutlineMarker('bullet', info.value, state.norm.separator) + " ";
+                                } else {
+                                    marker = getOutlineMarkerForDepth(getDepthFromOutlineMarker(info), (info.value || 0) + 1) + " ";
+                                }
+                            } else if (isBlank) {
+                                // Word / OneNote style behavior:
+                                // first blank line keeps a list-capable line, second consecutive blank line exits the list.
+                                nextLineDepth = 0;
+                                if (prevBlank) {
+                                    marker = "";
+                                } else {
+                                    const prevInfo = getSymbolInfo(currentLines[node.index - 1]);
+                                    const prevDepth = getDepthFromOutlineMarker(prevInfo);
+                                    marker = getOutlineMarkerForDepth(prevDepth === null ? 0 : prevDepth, 1) + " ";
+                                }
                             }
                         } else {
                             nextLineDepth = 0;
@@ -2401,9 +2434,13 @@
                             lockTabTitleFromFirstLine(tab, left);
                         }
                         const nextLines = [...currentLines];
+                        const currentLineIsBlank = !currentText.trim();
+                        const currentLineIsEnumerated = Boolean(getSymbolInfo(currentLines[node.index])) && !currentLineIsBlank;
+                        const shouldContinueOutline = tab.outlineModeActive && !state.tempOutlineDisabled && currentLineIsEnumerated;
+                        const nextInsertMarker = shouldContinueOutline ? marker : '';
                         nextLines[node.index] = "\t".repeat(node.depth) + left;
-                        nextLines.splice(node.index + 1, 0, "\t".repeat(nextLineDepth) + marker + right);
-                        updateTabLines(tab.id, nextLines, node.index + 1, marker.length);
+                        nextLines.splice(node.index + 1, 0, "\t".repeat(nextLineDepth) + nextInsertMarker + right);
+                        updateTabLines(tab.id, nextLines, node.index + 1, nextInsertMarker.length);
                         return;
                     }
 
@@ -2469,6 +2506,13 @@
                     }
 
                     if (e.key === 'Delete' && caretOffset === currentText.length && node.index < currentLines.length - 1) {
+                        if (!currentText.length && currentLines.length > 1) {
+                            e.preventDefault();
+                            const nextLines = [...currentLines];
+                            nextLines.splice(node.index, 1);
+                            updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
+                            return;
+                        }
                         e.preventDefault();
                         const nextLines = [...currentLines];
                         const currentRaw = nextLines[node.index];
@@ -2482,6 +2526,14 @@
                     }
 
                     if (e.key === 'Delete' && !currentText.length && currentLines.length > 1) {
+                        e.preventDefault();
+                        const nextLines = [...currentLines];
+                        nextLines.splice(node.index, 1);
+                        updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
+                        return;
+                    }
+
+                    if (e.key === 'Backspace' && !currentText.length && caretOffset === 0 && currentLines.length > 1) {
                         e.preventDefault();
                         const nextLines = [...currentLines];
                         nextLines.splice(node.index, 1);
@@ -2607,6 +2659,13 @@
                     : 'Showing all outline levels expanded. Click to show Level 1 only.';
             }
 
+            const normalizeBtn = domRefs['normalize-outline-btn'];
+            if (normalizeBtn) {
+                normalizeBtn.classList.toggle('hidden', !t.outlineModeActive);
+                normalizeBtn.disabled = !t.outlineModeActive;
+                normalizeBtn.classList.toggle('btn-active', Boolean(getNormalizePreview(t.id)));
+            }
+
             const mvBtn = domRefs['toggle-view-mode'];
             if (state.multiViewIds.length > 1) {
                 mvBtn.classList.remove('hidden');
@@ -2696,6 +2755,42 @@
             return levels[Math.max(depth, 0) % levels.length];
         }
 
+        function getOutlineMarkerForDepth(depth, fallback = 1) {
+            const style = getMarkerTypeForDepth(depth);
+            if (style === '<I>') return `<${numToRoman(fallback) || fallback}>`;
+            const label = getOutlineStyleLabel(style);
+            return formatOutlineMarker(style, fallback, state.norm.separator) || label;
+        }
+
+        function getDepthFromOutlineMarker(info) {
+            if (!info) return null;
+            const levels = getOutlineLevels();
+            const exact = levels.indexOf(info.type);
+            if (exact !== -1) return exact;
+
+            const raw = info.fullSymbol || '';
+            const labels = levels.map(getOutlineStyleLabel);
+            const labelExact = labels.findIndex(label => label.toLowerCase() === raw.toLowerCase());
+            if (labelExact !== -1) return labelExact;
+
+            if (raw === '<I>' || raw === '<II>' || raw === '<III>') return 0;
+
+            const rawExact = getDepthForMarkerText(raw);
+            if (rawExact !== null) return rawExact;
+
+            const templateExact = levels.findIndex(level => {
+                const template = parseOutlineStyleTemplate(level);
+                if (!template) return false;
+                const clean = raw.replace(/[<>().]/g, '');
+                if (template.kind === 'roman' && /[ivxlcdm]+/i.test(clean)) return true;
+                if (template.kind === 'alpha' && /^[a-zA-Z]$/.test(clean)) return true;
+                if (template.kind === 'number' && /^\d+$/.test(clean)) return true;
+                return false;
+            });
+            if (templateExact !== -1) return templateExact;
+            return info.indent;
+        }
+
         function getLineRange(text, start, end) {
             const lineStart = text.lastIndexOf('\n', Math.max(0, start) - 1) + 1;
             let lineEnd = text.indexOf('\n', Math.max(end, start));
@@ -2710,9 +2805,23 @@
 
         function getSymbolInfo(line) {
             const raw = line.replace(/^\t+/, ''), indent = line.length - raw.length;
+            const customMatch = raw.match(/^<([A-Za-zIVXLCDM]+)>(\s+)/);
             const bulletMatch = raw.match(/^([\-\*\+])(\s+)/);
             const parenMatch = raw.match(/^\((\d+|[a-zA-Z]{1}|[IVXLCDMivxlcdm]+)\)(\s+)/);
             const seqMatch = raw.match(/^([0-9A-Za-z]+)([^A-Za-z0-9]*)(\s+)/);
+            if (customMatch) {
+                const token = customMatch[1];
+                const depth = getDepthFromOutlineMarker({ type: '<I>', fullSymbol: `<${token}>`, indent });
+                const isRoman = /^[IVXLCDM]+$/i.test(token);
+                return {
+                    type: isRoman ? 'roman-dot' : 'number-dot',
+                    value: isRoman ? (ROMAN.indexOf(token.toUpperCase()) + 1 || 1) : (parseInt(token, 10) || 1),
+                    fullSymbol: `<${token}>`,
+                    indent,
+                    isStart: true,
+                    trailingSpace: ' '
+                };
+            }
             if (bulletMatch) return { type: 'bullet', value: bulletMatch[1], fullSymbol: bulletMatch[1], indent, isStart: true, trailingSpace: bulletMatch[2] };
             if (parenMatch) {
                 const char = parenMatch[1], space = parenMatch[2];
@@ -2767,6 +2876,14 @@
                 return `${template.prefix}${token}${template.suffix}`;
             }
             return '-';
+        }
+
+        function parseOutlineLevelToken(style, value) {
+            const token = String(style || '').trim();
+            const resolved = String(value || '').trim();
+            if (!token) return resolved;
+            if (token.startsWith('<') && token.endsWith('>')) return token;
+            return formatOutlineMarker(token, value, state.norm.separator);
         }
 
         function shiftBulletMarker(marker, delta) {
@@ -2839,7 +2956,7 @@
 
                 counters.length = info.indent + 1;
                 counters[info.indent] = (counters[info.indent] || 0) + 1;
-                return replaceLineMarker(line, info, info.indent, info.type, counters[info.indent]);
+                return replaceLineMarker(line, info, info.indent, getMarkerTypeForDepth(getDepthFromOutlineMarker(info)), counters[info.indent]);
             });
         }
 
@@ -2901,7 +3018,10 @@
             if (info.type === 'bullet') {
                 marker = formatOutlineMarker('bullet', info.value, state.norm.separator);
             } else {
-                marker = formatOutlineMarker(info.type, (info.value || 0) + 1, state.norm.separator);
+                const depth = getDepthFromOutlineMarker(info);
+                const style = getMarkerTypeForDepth(depth);
+                const nextValue = (info.value || 1) + 1;
+                marker = formatOutlineMarker(style, nextValue, state.norm.separator);
             }
             const nextLine = "\n" + "\t".repeat(info.indent) + marker + " ";
             const nextText = text.substring(0, cursor) + nextLine + text.substring(cursor);
@@ -3029,7 +3149,10 @@
             if (domRefs['accent-swatch-btn']) domRefs['accent-swatch-btn'].style.backgroundColor = accent;
             if (domRefs['norm-separator']) domRefs['norm-separator'].value = state.norm.separator;
             domRefs.outlineLevelInputs.forEach((input, index) => {
-                input.value = getOutlineStyleLabel(getOutlineLevels()[index] || DEFAULT_OUTLINE_LEVELS[index]);
+                input.value = getOutlineStyleLabel(DEFAULT_OUTLINE_LEVELS[index]);
+                input.disabled = true;
+                input.readOnly = true;
+                input.classList.add('opacity-60', 'cursor-not-allowed');
             });
             domRefs.specialColorInputs.forEach(input => {
                 const type = input.dataset.specialColor;
@@ -3368,15 +3491,7 @@
                 };
             });
             domRefs.outlineLevelInputs.forEach(input => {
-                input.onchange = (e) => {
-                    const index = Number(e.target.dataset.levelIndex);
-                    const nextLevels = [...getOutlineLevels()];
-                    nextLevels[index] = normalizeOutlineStyleInput(e.target.value, nextLevels[index] || DEFAULT_OUTLINE_LEVELS[index]);
-                    mutateState(() => {
-                        state.norm.levels = nextLevels;
-                        applyTheme();
-                    }, { save: true });
-                };
+                input.onchange = null;
             });
             domRefs['reset-theme-btn'].onclick = () => mutateState(() => {
                 state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, dateTimeExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
@@ -3415,6 +3530,16 @@
             if (domRefs['transform-title-btn']) {
                 domRefs['transform-title-btn'].onclick = () => transformSelectedText('title');
             }
+        }
+
+        function normalizeOutlineSelectionToken(line) {
+            const info = getSymbolInfo(line);
+            if (!info) return line;
+            const depth = getDepthFromOutlineMarker(info);
+            const style = getMarkerTypeForDepth(depth);
+            const content = stripOutlinePrefix(line, info);
+            const marker = formatOutlineMarker(style, 1, state.norm.separator);
+            return "\t".repeat(info.indent) + marker + (/ /.test(marker) ? '' : ' ') + content;
         }
 
         document.addEventListener('DOMContentLoaded', init);
