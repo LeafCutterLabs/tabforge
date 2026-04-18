@@ -38,9 +38,9 @@
         function getDefaultAccentForTheme(mode = 'default') {
             return DEFAULT_THEME_ACCENTS[mode] || DEFAULT_THEME_ACCENTS.default;
         }
-        const { createTabRecord, hydrateTabRecord, duplicateTabRecord } = window.TabForgeTabModel;
+        const { createTabRecord, hydrateTabRecord } = window.TabForgeTabModel;
         const { getStorageKeys, safeParseJSON, normalizeThemePayload, serializeStatePayload } = window.TabForgePersistence;
-        const { createTabState, duplicateTabState, closeTabState } = window.TabForgeCommands;
+        const { createTabState, closeTabState } = window.TabForgeCommands;
 
         let state = {
             tabs: [],
@@ -106,6 +106,25 @@
             console.warn(`[tabForge invariant] ${message}`, details ?? '');
         }
 
+        function safeStorageGet(key) {
+            try {
+                return localStorage.getItem(key);
+            } catch (error) {
+                debugInvariant(`storage read failed for ${key}`, error);
+                return null;
+            }
+        }
+
+        function safeStorageSet(key, value) {
+            try {
+                localStorage.setItem(key, value);
+                return true;
+            } catch (error) {
+                console.warn(`[tabForge] storage write failed for ${key}`, error);
+                return false;
+            }
+        }
+
         function getCachePrefix(key) {
             return String(key).split('::', 1)[0];
         }
@@ -154,14 +173,11 @@
                 'zip-export-toggle',
                 'date-time-export-toggle',
                 'hex-accent',
-                'norm-separator',
                 'file-input',
                 'add-tab-btn',
-                'duplicate-tab-btn',
                 'import-btn',
                 'export-tab-btn',
                 'export-all-btn',
-                'copy-view-btn',
                 'find-next-btn',
                 'replace-btn',
                 'replace-all-btn',
@@ -176,15 +192,9 @@
                 'accent-swatch-btn',
                 'accent-color-picker',
                 'toggle-hide-completed',
-                'text-transform-group',
-                'transform-upper-btn',
-                'transform-lower-btn',
-                'transform-sentence-btn',
-                'transform-title-btn'
             ].forEach(id => {
                 domRefs[id] = document.getElementById(id);
             });
-            domRefs.outlineLevelInputs = Array.from(document.querySelectorAll('.outline-level-input'));
             domRefs.specialColorInputs = Array.from(document.querySelectorAll('[data-special-color]'));
             domRefs.specialColorHexInputs = Array.from(document.querySelectorAll('[data-special-color-hex]'));
             domRefs.modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
@@ -219,7 +229,7 @@
         }
 
         function flushRender(flags = pendingRender) {
-            validateStateIntegrity('flushRender');
+            if (DEBUG_INVARIANTS) validateStateIntegrity('flushRender');
             if (renderFrame) {
                 cancelAnimationFrame(renderFrame);
                 renderFrame = null;
@@ -227,13 +237,15 @@
             const nextFlags = { ...flags };
             pendingRender = { layout: false, tabs: false, editor: false, toolbar: false, find: false };
             if (nextFlags.layout) applyLayoutClasses();
-            if (nextFlags.editor || nextFlags.toolbar || nextFlags.find) {
+            const hasSearchQuery = Boolean(state.search.query.trim());
+            if ((nextFlags.editor || nextFlags.toolbar || nextFlags.find) && hasSearchQuery) {
                 refreshSearchResults({ preserveIndex: true });
+            } else if (nextFlags.find) {
+                syncFindBarUi();
             }
             if (nextFlags.tabs) renderTabs();
             if (nextFlags.editor) renderEditorArea();
             if (nextFlags.toolbar) updateToolbarUI();
-            if (nextFlags.find) syncFindBarUi();
         }
 
         function requestRender(flags = 'full', options = {}) {
@@ -353,11 +365,6 @@
             return title.toLowerCase().endsWith('.txt') ? title : title + '.txt';
         }
 
-        function appendNewToTitle(title) {
-            const base = title.replace(/\.txt$/i, '');
-            return ensureTxtExtension(base + ' NEW');
-        }
-
         function deriveTitleFromText(text) {
             const first = (text || '').trim().replace(/^[#\-\[\]x!!\d\.\s\)]+/, '').substring(0, 30);
             return ensureTxtExtension(first || 'untitled');
@@ -368,20 +375,6 @@
             tab.title = deriveTitleFromText(lineText);
             tab.manuallyRenamed = true;
             requestRender('tabs');
-        }
-
-        function duplicateActiveTab() {
-            const nextState = duplicateTabState({
-                tabs: state.tabs,
-                activeTabId: state.activeTabId,
-                createId: makeTabId,
-                buildTitle: appendNewToTitle
-            });
-            if (!nextState) return;
-            state.tabs = nextState.tabs;
-            state.activeTabId = nextState.activeTabId;
-            saveToStorage();
-            requestRender('full');
         }
 
         function getOutlineLevels() {
@@ -869,10 +862,6 @@
                 end = i;
             }
             return end;
-        }
-
-        function getDescendantCount(lines, startIndex) {
-            return getSubtreeEndIndex(lines, startIndex) - startIndex;
         }
 
         function getCollapsedLineSet(tab) {
@@ -1423,7 +1412,6 @@
             const collapsed = getCollapsedLineSet(tab);
             const visible = [];
             let hiddenDepth = null;
-            let followsCollapsedGap = false;
             const levelFilter = tab.outlineModeActive && Number.isInteger(tab.outlineLevelFilter) ? tab.outlineLevelFilter : null;
 
             for (let i = 0; i < lines.length; i++) {
@@ -1433,30 +1421,19 @@
                 if (tab.hideCompletedLines && isDone) continue;
                 if (levelFilter && depth + 1 > levelFilter) continue;
                 if (hiddenDepth !== null && depth > hiddenDepth && !hasBlockingAttention(lines[i])) continue;
-                if (hiddenDepth !== null && depth <= hiddenDepth) {
-                    hiddenDepth = null;
-                    followsCollapsedGap = true;
-                }
+                if (hiddenDepth !== null && depth <= hiddenDepth) hiddenDepth = null;
 
                 const descendantCount = descendantCounts[i];
                 const isCollapsed = collapsed.has(i) && descendantCount >= 3;
-                const rowFlags = [...attentionFlags];
-                if (isCollapsed) rowFlags.push({ type: 'collapsed-parent', color: state.theme.accent });
-                if (followsCollapsedGap) rowFlags.push({ type: 'collapsed-gap', color: state.theme.accent });
                 visible.push({
                     index: i,
                     raw: lines[i],
                     depth,
                     text: getDisplayText(lines[i]),
-                    descendantCount,
-                    isCollapsed,
-                    showToggle: descendantCount >= 3,
                     attentionFlags,
-                    rowHighlight: buildRowHighlight(rowFlags),
-                    followsCollapsedGap
+                    rowHighlight: buildRowHighlight(attentionFlags)
                 });
 
-                followsCollapsedGap = false;
                 if (isCollapsed) hiddenDepth = depth;
             }
 
@@ -1516,19 +1493,6 @@
                 line.focus({ preventScroll: true });
                 line.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             });
-        }
-
-        function toggleCollapsedLine(tabId, lineIndex, options = {}) {
-            const tab = getTabById(tabId);
-            if (!tab) return;
-            if (options.record !== false) recordTabHistory(tabId);
-            const set = getCollapsedLineSet(tab);
-            if (set.has(lineIndex)) set.delete(lineIndex);
-            else set.add(lineIndex);
-            tab.collapsedLines = [...set].sort((a, b) => a - b);
-            invalidateTabCaches(tabId);
-            saveToStorage();
-            requestRender('editor', { immediate: true });
         }
 
         function setSelectedLineRange(tabId, start, end) {
@@ -1972,45 +1936,6 @@
             requestRender('full');
         }
 
-        async function copyTextToClipboard(text) {
-            if (navigator.clipboard?.writeText && window.isSecureContext) {
-                try {
-                    await navigator.clipboard.writeText(text);
-                    return true;
-                } catch (error) {
-                    console.warn('Clipboard API unavailable, falling back to textarea copy', error);
-                }
-            }
-
-            const helper = document.createElement('textarea');
-            helper.value = text;
-            helper.setAttribute('readonly', '');
-            helper.style.position = 'fixed';
-            helper.style.top = '-9999px';
-            helper.style.left = '-9999px';
-            document.body.appendChild(helper);
-            helper.select();
-            const copied = document.execCommand('copy');
-            helper.remove();
-            if (!copied) throw new Error('Browser copy command was rejected.');
-            return copied;
-        }
-
-        async function copyCurrentView() {
-            const tab = getActiveTab();
-            if (!tab) return;
-            const { visible } = getVisibleLineState(tab);
-            const text = visible.map(node => node.raw).join('\n');
-            try {
-                await copyTextToClipboard(text);
-                if (domRefs['save-status']) domRefs['save-status'].innerText = `Copied ${visible.length} visible line${visible.length === 1 ? '' : 's'}`;
-                window.setTimeout(() => requestRender('toolbar'), 1400);
-            } catch (error) {
-                console.warn('Copy current view failed', error);
-                if (domRefs['save-status']) domRefs['save-status'].innerText = 'Copy failed';
-            }
-        }
-
         function buildMarkerRail(tab, shell) {
             const lines = getTabLines(tab);
             const wrap = shell.querySelector('.editor-cell');
@@ -2154,7 +2079,7 @@
 
             visible.forEach((node, visibleIndex) => {
                 const row = document.createElement('div');
-                row.className = "outline-row" + (node.isCollapsed ? " collapsed-parent" : "");
+                row.className = "outline-row";
                 if (tab.showZebra && tab.showWordWrap && visibleIndex % 2 === 1) row.classList.add('zebra-row-alt');
                 row.dataset.rowIndex = String(node.index);
                 row.dataset.tabId = tab.id;
@@ -2164,11 +2089,8 @@
                     row.classList.add('drag-source');
                 }
                 applyRowHighlight(row, node.raw, [
-                    ...(node.isCollapsed ? [{ type: 'collapsed-parent', color: state.theme.accent }] : []),
-                    ...(node.followsCollapsedGap ? [{ type: 'collapsed-gap', color: state.theme.accent }] : [])
+                    ...node.attentionFlags
                 ]);
-                if (node.isCollapsed) row.classList.add('collapsed-parent-highlight');
-                if (node.followsCollapsedGap) row.classList.add('after-collapsed-gap');
                 if ((lines[node.index] || '') !== (savedLines[node.index] || '')) row.classList.add('revision-changed');
                 if (state.dragMove && state.dragMove.tabId === tab.id && state.dragMove.hoverIndex === node.index) {
                     row.classList.add(state.dragMove.position === 'before' ? 'drop-before' : 'drop-after');
@@ -2177,17 +2099,6 @@
                 if (tab.showLineNumbers) {
                     const gutter = document.createElement('div');
                     gutter.className = 'outline-gutter line-selectable';
-                    if (node.showToggle) {
-                        const toggle = document.createElement('span');
-                        toggle.className = 'outline-toggle';
-                        toggle.textContent = node.isCollapsed ? '+' : '-';
-                        toggle.onmousedown = (e) => e.stopPropagation();
-                        toggle.onclick = (e) => {
-                            e.stopPropagation();
-                            toggleCollapsedLine(tab.id, node.index);
-                        };
-                        gutter.appendChild(toggle);
-                    }
                     const label = document.createElement('span');
                     label.className = 'line-number-label';
                     label.textContent = String(node.index + 1);
@@ -2249,10 +2160,7 @@
                 line.onblur = () => {
                     const latestLineText = getDisplayText((getTabLines(getTabById(tab.id))[node.index]) || (line.textContent || ''));
                     setLineDisplayContent(line, latestLineText, false, node.index);
-                    applyRowHighlight(row, "\t".repeat(getLineDepth((getTabLines(getTabById(tab.id))[node.index]) || '')) + latestLineText, [
-                        ...(node.isCollapsed ? [{ type: 'collapsed-parent', color: state.theme.accent }] : []),
-                        ...(node.followsCollapsedGap ? [{ type: 'collapsed-gap', color: state.theme.accent }] : [])
-                    ]);
+                    applyRowHighlight(row, "\t".repeat(getLineDepth((getTabLines(getTabById(tab.id))[node.index]) || '')) + latestLineText, node.attentionFlags);
                 };
 
                 line.onmouseenter = () => {
@@ -2287,10 +2195,6 @@
 
                 row.onmouseenter = () => {
                     if (state.dragMove && state.dragMove.tabId === tab.id) {
-                        if (node.isCollapsed) {
-                            toggleCollapsedLine(tab.id, node.index, { record: false });
-                            return;
-                        }
                         updateLineDragMoveTarget(tab.id, node.index, 'after');
                         return;
                     }
@@ -2319,10 +2223,7 @@
                     const nextRawLine = "\t".repeat(node.depth) + sanitizedText;
                     nextLines[node.index] = nextRawLine;
                     e.currentTarget.classList.toggle('empty', !sanitizedText);
-                    applyRowHighlight(row, nextRawLine, [
-                        ...(node.isCollapsed ? [{ type: 'collapsed-parent', color: state.theme.accent }] : []),
-                        ...(node.followsCollapsedGap ? [{ type: 'collapsed-gap', color: state.theme.accent }] : [])
-                    ]);
+                    applyRowHighlight(row, nextRawLine, node.attentionFlags);
                     updateContent(tab.id, nextLines.join('\n'), null, { coalesceTyping: true });
                 };
 
@@ -2483,12 +2384,6 @@
                             const nextLines = [...currentLines];
                             nextLines.splice(node.index, 1);
                             updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
-                            return;
-                        }
-                        const collapsedParent = visibleIndex > 0 && visible[visibleIndex - 1].index < node.index - 1 ? visible[visibleIndex - 1] : null;
-                        if (collapsedParent && collapsedParent.isCollapsed) {
-                            e.preventDefault();
-                            toggleCollapsedLine(tab.id, collapsedParent.index);
                             return;
                         }
                         if (node.index > 0 && currentLines.length > 1) {
@@ -2659,13 +2554,6 @@
                     : 'Showing all outline levels expanded. Click to show Level 1 only.';
             }
 
-            const normalizeBtn = domRefs['normalize-outline-btn'];
-            if (normalizeBtn) {
-                normalizeBtn.classList.toggle('hidden', !t.outlineModeActive);
-                normalizeBtn.disabled = !t.outlineModeActive;
-                normalizeBtn.classList.toggle('btn-active', Boolean(getNormalizePreview(t.id)));
-            }
-
             const mvBtn = domRefs['toggle-view-mode'];
             if (state.multiViewIds.length > 1) {
                 mvBtn.classList.remove('hidden');
@@ -2688,12 +2576,6 @@
                 ? 'Autosaved · Revision pending'
                 : `Revision saved ${formatManualSaveTime(t.manualSavedAt)}`;
             domRefs['open-find-btn'].classList.toggle('btn-active', state.search.open);
-            const canTransform = canTransformSelectedText();
-            domRefs['text-transform-group']?.classList.toggle('hidden', !canTransform);
-            domRefs['text-transform-group']?.classList.toggle('flex', canTransform);
-            ['transform-upper-btn', 'transform-lower-btn', 'transform-sentence-btn', 'transform-title-btn'].forEach(id => {
-                if (domRefs[id]) domRefs[id].disabled = !canTransform;
-            });
 
             domRefs['zip-export-toggle'].checked = state.theme.zipExport;
             domRefs['date-time-export-toggle'].checked = state.theme.dateTimeExport;
@@ -3030,75 +2912,6 @@
             return { text: nextText, selectionStart: nextCursor, selectionEnd: nextCursor };
         }
 
-        function normalizeSelection() {
-            const tab = getActiveTab();
-            const ta = getEditorTextarea(tab ? tab.id : '');
-            if (!tab || !ta) return;
-            const start = ta.selectionStart, end = ta.selectionEnd, fullText = ta.value;
-            const baseRange = getLineRange(fullText, start, end);
-            const { lineStart, lineEnd } = expandRangeToIncludeChildren(fullText, baseRange.lineStart, baseRange.lineEnd);
-            const selection = fullText.substring(lineStart, lineEnd);
-            const countersBefore = getOutlineCountersBefore(fullText, lineStart);
-            const result = normalizeOutlineLines(selection.split('\n'), countersBefore).join('\n');
-
-            if (selection !== result) {
-                const oldScroll = ta.scrollTop;
-                ta.value = fullText.substring(0, lineStart) + result + fullText.substring(lineEnd);
-                ta.scrollTop = oldScroll;
-                ta.selectionStart = lineStart;
-                ta.selectionEnd = lineStart + result.length;
-                updateContent(tab.id, ta.value, ta);
-            }
-        }
-
-        function getFocusedEditableLine() {
-            const active = document.activeElement;
-            return active && active.classList?.contains('outline-line') ? active : null;
-        }
-
-        function canTransformSelectedText() {
-            const line = getFocusedEditableLine();
-            const selection = line ? getSelectionOffsets(line) : null;
-            return Boolean(selection && !selection.collapsed);
-        }
-
-        function transformSelectedText(mode) {
-            const line = getFocusedEditableLine();
-            if (!line || !mode) return;
-            const selection = getSelectionOffsets(line);
-            if (!selection || selection.collapsed) return;
-            const tabId = line.dataset.tabLine.split(':')[0];
-            const lineIndex = Number(line.dataset.lineIndex);
-            const tab = getTabById(tabId);
-            if (!tab || !Number.isInteger(lineIndex)) return;
-            const currentLines = [...getTabLines(tab)];
-            const rawLine = currentLines[lineIndex];
-            const leadingTabs = (rawLine.match(/^\t*/) || [''])[0];
-            const displayText = getDisplayText(rawLine);
-            const selectedText = displayText.slice(selection.start, selection.end);
-            let transformed = selectedText;
-
-            if (mode === 'upper') transformed = selectedText.toUpperCase();
-            if (mode === 'lower') transformed = selectedText.toLowerCase();
-            if (mode === 'sentence') {
-                const lower = selectedText.toLowerCase();
-                transformed = lower.charAt(0).toUpperCase() + lower.slice(1);
-            }
-            if (mode === 'title') {
-                transformed = selectedText.toLowerCase().replace(/\b([a-z])/g, match => match.toUpperCase());
-            }
-
-            currentLines[lineIndex] = leadingTabs + displayText.slice(0, selection.start) + transformed + displayText.slice(selection.end);
-            state.pendingCaret = { tabId, lineIndex, offset: selection.start + transformed.length };
-            updateTabLines(tabId, currentLines, lineIndex, selection.start + transformed.length);
-            requestAnimationFrame(() => {
-                const nextLine = getLineEditor(tabId, lineIndex);
-                if (!nextLine) return;
-                nextLine.focus({ preventScroll: true });
-                selectLineRange(nextLine, selection.start, selection.start + transformed.length);
-            });
-        }
-
         function printCurrentTab() {
             const tab = getActiveTab();
             if (!tab) return;
@@ -3147,13 +2960,6 @@
             domRefs['hex-accent'].value = accent.replace('#', '');
             if (domRefs['accent-color-picker']) domRefs['accent-color-picker'].value = accent;
             if (domRefs['accent-swatch-btn']) domRefs['accent-swatch-btn'].style.backgroundColor = accent;
-            if (domRefs['norm-separator']) domRefs['norm-separator'].value = state.norm.separator;
-            domRefs.outlineLevelInputs.forEach((input, index) => {
-                input.value = getOutlineStyleLabel(DEFAULT_OUTLINE_LEVELS[index]);
-                input.disabled = true;
-                input.readOnly = true;
-                input.classList.add('opacity-60', 'cursor-not-allowed');
-            });
             domRefs.specialColorInputs.forEach(input => {
                 const type = input.dataset.specialColor;
                 input.value = getSpecialColor(type);
@@ -3174,16 +2980,26 @@
                 clearTimeout(saveTimer);
                 saveTimer = null;
             }
-            const payload = serializePersistenceState();
-            localStorage.setItem(STORAGE_KEY_TABS, JSON.stringify(payload.tabs));
-            localStorage.setItem(STORAGE_KEY_ACTIVE, payload.activeTabId);
-            localStorage.setItem(STORAGE_KEY_THEME, JSON.stringify(payload.themeData));
-            localStorage.setItem(STORAGE_KEY_RECOVERY, JSON.stringify({
-                savedAt: Date.now(),
-                ...payload
-            }));
-            const status = domRefs['save-status'];
-            if (status) status.innerText = "Synced " + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            let payload;
+            try {
+                payload = serializePersistenceState();
+            } catch (error) {
+                console.warn('[tabForge] save skipped because state could not be serialized', error);
+                return;
+            }
+            const writes = [
+                safeStorageSet(STORAGE_KEY_TABS, JSON.stringify(payload.tabs)),
+                safeStorageSet(STORAGE_KEY_ACTIVE, payload.activeTabId),
+                safeStorageSet(STORAGE_KEY_THEME, JSON.stringify(payload.themeData)),
+                safeStorageSet(STORAGE_KEY_RECOVERY, JSON.stringify({
+                    savedAt: Date.now(),
+                    ...payload
+                }))
+            ];
+            if (writes.every(Boolean)) {
+                const status = domRefs['save-status'];
+                if (status) status.innerText = "Synced " + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            }
         }
 
         function saveToStorage() {
@@ -3272,8 +3088,10 @@
         }
 
         function init() {
-            const savedTabs = localStorage.getItem(STORAGE_KEY_TABS), savedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE), savedThemeData = localStorage.getItem(STORAGE_KEY_THEME);
-            const savedRecovery = localStorage.getItem(STORAGE_KEY_RECOVERY);
+            const savedTabs = safeStorageGet(STORAGE_KEY_TABS);
+            const savedActiveId = safeStorageGet(STORAGE_KEY_ACTIVE);
+            const savedThemeData = safeStorageGet(STORAGE_KEY_THEME);
+            const savedRecovery = safeStorageGet(STORAGE_KEY_RECOVERY);
             let primaryStateLoaded = false;
 
             const parsedTabs = safeParseJSON(savedTabs, null);
@@ -3351,7 +3169,6 @@
             document.addEventListener('mousemove', handlePendingLineDrag);
             document.addEventListener('mouseup', endDragSelection);
             if (domRefs['add-tab-btn']) domRefs['add-tab-btn'].onclick = () => addTab();
-            if (domRefs['duplicate-tab-btn']) domRefs['duplicate-tab-btn'].onclick = () => duplicateActiveTab();
             if (domRefs['import-btn']) domRefs['import-btn'].onclick = () => domRefs['file-input'].click();
             if (domRefs['export-tab-btn']) domRefs['export-tab-btn'].onclick = () => {
                 const t = state.tabs.find(x => x.id === state.activeTabId);
@@ -3370,7 +3187,6 @@
             domRefs['manual-save-all-btn'].onclick = () => markManualSaveAll();
             domRefs['restore-save-btn'].onclick = () => restoreLastManualSave(state.activeTabId);
             domRefs['export-all-btn'].onclick = () => exportAll();
-            domRefs['copy-view-btn'].onclick = () => copyCurrentView();
             domRefs['print-btn'].onclick = () => printCurrentTab();
             domRefs['find-next-btn'].onclick = () => goToSearchResult(state.search.currentIndex + 1);
             domRefs['find-input'].oninput = (e) => {
@@ -3458,12 +3274,6 @@
             domRefs['print-line-numbers-toggle'].onchange = (e) => mutateState(() => {
                 state.theme.printLineNumbers = e.target.checked;
             }, { save: true, render: 'toolbar' });
-            if (domRefs['norm-separator']) {
-                domRefs['norm-separator'].oninput = (e) => mutateState(() => {
-                    state.norm.separator = e.target.value;
-                    applyTheme();
-                }, { save: true });
-            }
             domRefs.specialColorInputs.forEach(input => {
                 input.oninput = (e) => mutateState(() => {
                     state.theme.specialColors = {
@@ -3490,9 +3300,6 @@
                     }, { render: 'editor', save: true });
                 };
             });
-            domRefs.outlineLevelInputs.forEach(input => {
-                input.onchange = null;
-            });
             domRefs['reset-theme-btn'].onclick = () => mutateState(() => {
                 state.theme = { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, dateTimeExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } };
                 state.norm = { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] };
@@ -3518,18 +3325,6 @@
                 requestRender('editor');
             };
             domRefs['outline-level-filter-btn'].onclick = () => cycleOutlineLevelFilter(state.activeTabId);
-            if (domRefs['transform-upper-btn']) {
-                domRefs['transform-upper-btn'].onclick = () => transformSelectedText('upper');
-            }
-            if (domRefs['transform-lower-btn']) {
-                domRefs['transform-lower-btn'].onclick = () => transformSelectedText('lower');
-            }
-            if (domRefs['transform-sentence-btn']) {
-                domRefs['transform-sentence-btn'].onclick = () => transformSelectedText('sentence');
-            }
-            if (domRefs['transform-title-btn']) {
-                domRefs['transform-title-btn'].onclick = () => transformSelectedText('title');
-            }
         }
 
         function normalizeOutlineSelectionToken(line) {

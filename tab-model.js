@@ -53,27 +53,8 @@
         });
     }
 
-    function duplicateTabRecord(source, { id, title }) {
-        return createTabRecord({
-            id,
-            title,
-            content: source.content,
-            manuallyRenamed: true,
-            showLineNumbers: source.showLineNumbers,
-            showZebra: source.showZebra,
-            showWordWrap: source.showWordWrap,
-            outlineModeActive: source.outlineModeActive,
-            outlineLevelFilter: source.outlineLevelFilter,
-            hideCompletedLines: source.hideCompletedLines,
-            collapsedLines: source.collapsedLines,
-            manualSavedContent: source.content,
-            manualSavedAt: Date.now()
-        });
-    }
-
     global.TabForgeTabModel = {
         createTabRecord,
-        hydrateTabRecord,
-        duplicateTabRecord
+        hydrateTabRecord
     };
 })(window);

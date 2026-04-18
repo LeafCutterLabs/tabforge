@@ -287,11 +287,6 @@
             box-shadow: inset 3px 0 0 var(--special-urgent);
         }
 
-        .outline-row.after-collapsed-gap .outline-gutter,
-        .outline-row.collapsed-parent-highlight .outline-gutter {
-            background: color-mix(in srgb, var(--accent-color) 12%, var(--editor-stripe));
-        }
-
         .token-mention {
             color: inherit;
             font-weight: inherit;
@@ -404,17 +399,6 @@
 
         .outline-gutter.draggable {
             cursor: grab;
-        }
-
-        .outline-row.collapsed-parent .outline-gutter {
-            color: var(--accent-color);
-        }
-
-        .outline-toggle {
-            width: 12px;
-            text-align: center;
-            cursor: pointer;
-            opacity: 0.8;
         }
 
         .outline-line {

@@ -1,11 +1,5 @@
 (function (global) {
-    const { createTabRecord, duplicateTabRecord } = global.TabForgeTabModel;
-
-    function insertAt(array, index, value) {
-        const next = [...array];
-        next.splice(index, 0, value);
-        return next;
-    }
+    const { createTabRecord } = global.TabForgeTabModel;
 
     function createTabState({ tabs, title = 'untitled.txt', content = '', createId }) {
         const id = createId();
@@ -17,22 +11,7 @@
         });
         return {
             tabs: [...tabs, tab],
-            activeTabId: id,
-            tab
-        };
-    }
-
-    function duplicateTabState({ tabs, activeTabId, createId, buildTitle }) {
-        const source = tabs.find(tab => tab.id === activeTabId);
-        if (!source) return null;
-        const id = createId();
-        const title = buildTitle(source.title);
-        const copy = duplicateTabRecord(source, { id, title });
-        const sourceIndex = tabs.findIndex(tab => tab.id === source.id);
-        return {
-            tabs: insertAt(tabs, sourceIndex + 1, copy),
-            activeTabId: id,
-            tab: copy
+            activeTabId: id
         };
     }
 
@@ -55,7 +34,6 @@
 
     global.TabForgeCommands = {
         createTabState,
-        duplicateTabState,
         closeTabState
     };
 })(window);
