@@ -28,6 +28,13 @@
             dark: '#2563eb',
             matrix: '#16A34A'
         };
+        const DEFAULT_EDITOR_FONT_SIZE = 14;
+        const MIN_EDITOR_FONT_SIZE = 10;
+        const MAX_EDITOR_FONT_SIZE = 26;
+        const EDITOR_FONT_SIZE_STEP = 1;
+        function clampFontSize(value) {
+            return Math.min(MAX_EDITOR_FONT_SIZE, Math.max(MIN_EDITOR_FONT_SIZE, value));
+        }
         function getDefaultAccentForTheme(mode = 'default') {
             return DEFAULT_THEME_ACCENTS[mode] || DEFAULT_THEME_ACCENTS.default;
         }
@@ -53,7 +60,7 @@
             preserveSelectionOnFocus: false,
             hoveredLineKey: null,
             search: { open: false, query: '', replace: '', fuzzy: false, results: [], currentIndex: -1 },
-            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, printLineNumbers: false, specialColors: { ...DEFAULT_SPECIAL_COLORS } },
+            theme: { accent: '#2563eb', mode: 'default', orientation: 'horizontal', zipExport: false, printLineNumbers: false, editorFontSize: DEFAULT_EDITOR_FONT_SIZE, specialColors: { ...DEFAULT_SPECIAL_COLORS } },
             norm: { separator: '.', levels: [...DEFAULT_OUTLINE_LEVELS] }
         };
 
@@ -122,6 +129,8 @@
                 'toggle-line-numbers',
                 'toggle-zebra',
                 'toggle-word-wrap',
+                'zoom-out-btn',
+                'zoom-in-btn',
                 'toggle-outline-mode',
                 'outline-level-filter-btn',
                 'outline-level-filter-label',
@@ -383,15 +392,15 @@
         }
 
         function normalizeOutlineStyleInput(value, fallback) {
-            const trimmed = value.trim();
-            if (!trimmed) return fallback;
-            const normalized = trimmed.toLowerCase();
-            return OUTLINE_LABEL_TO_STYLE[normalized] || trimmed;
+            const raw = String(value || '');
+            if (!raw.trim()) return fallback;
+            const normalized = raw.trim().toLowerCase();
+            return OUTLINE_LABEL_TO_STYLE[normalized] || raw;
         }
 
         function parseOutlineStyleTemplate(style) {
-            const sample = String(style || '').trim();
-            if (!sample) return null;
+            const sample = String(style || '');
+            if (!sample.trim()) return null;
 
             const parenMatch = sample.match(/^([^A-Za-z0-9]*)(\(?)([A-Za-z0-9]+)(\)?)([^A-Za-z0-9]*)$/);
             if (!parenMatch) return null;
@@ -1693,6 +1702,30 @@
 
         function handleFindShortcuts(e) {
             const isMod = e.ctrlKey || e.metaKey;
+            if (isMod && (e.key === '+' || e.key === '=')) {
+                e.preventDefault();
+                mutateState(() => {
+                    state.theme.editorFontSize = clampFontSize((state.theme.editorFontSize || DEFAULT_EDITOR_FONT_SIZE) + EDITOR_FONT_SIZE_STEP);
+                    applyTheme();
+                }, { save: true });
+                return;
+            }
+            if (isMod && (e.key === '-' || e.key === '_')) {
+                e.preventDefault();
+                mutateState(() => {
+                    state.theme.editorFontSize = clampFontSize((state.theme.editorFontSize || DEFAULT_EDITOR_FONT_SIZE) - EDITOR_FONT_SIZE_STEP);
+                    applyTheme();
+                }, { save: true });
+                return;
+            }
+            if (isMod && e.key === '0') {
+                e.preventDefault();
+                mutateState(() => {
+                    state.theme.editorFontSize = DEFAULT_EDITOR_FONT_SIZE;
+                    applyTheme();
+                }, { save: true });
+                return;
+            }
             if (isMod && e.key.toLowerCase() === 'f') {
                 e.preventDefault();
                 openFindBar();
@@ -2669,7 +2702,7 @@
             const raw = line.replace(/^\t+/, ''), indent = line.length - raw.length;
             const bulletMatch = raw.match(/^([\-\*\+])(\s+)/);
             const parenMatch = raw.match(/^\((\d+|[a-zA-Z]{1}|[IVXLCDMivxlcdm]+)\)(\s+)/);
-            const seqMatch = raw.match(/^(\d+|[a-zA-Z]{1}|[IVXLCDMivxlcdm]+)([\.\-\)]?)(\s+)/);
+            const seqMatch = raw.match(/^([0-9A-Za-z]+)([^A-Za-z0-9]*)(\s+)/);
             if (bulletMatch) return { type: 'bullet', value: bulletMatch[1], fullSymbol: bulletMatch[1], indent, isStart: true, trailingSpace: bulletMatch[2] };
             if (parenMatch) {
                 const char = parenMatch[1], space = parenMatch[2];
@@ -2735,7 +2768,9 @@
 
         function replaceLineMarker(line, info, indent, markerType, value) {
             const content = stripOutlinePrefix(line, info);
-            return "\t".repeat(indent) + formatOutlineMarker(markerType, value, state.norm.separator) + " " + content;
+            const marker = formatOutlineMarker(markerType, value, state.norm.separator);
+            const sep = /\s$/.test(marker) ? '' : ' ';
+            return "\t".repeat(indent) + marker + sep + content;
         }
 
         function computeOutlineCounters(lines, counters = []) {
@@ -2959,15 +2994,17 @@
         }
 
         function applyTheme() {
-            const root = document.documentElement;
             const body = document.body;
-            const { accent, mode } = state.theme;
+            const { accent, mode, editorFontSize } = state.theme;
             const defaultAccent = getDefaultAccentForTheme(mode);
             if (accent && accent.toLowerCase() !== defaultAccent.toLowerCase()) {
                 body.style.setProperty('--accent-color', accent);
             } else {
                 body.style.removeProperty('--accent-color');
             }
+            const fontSize = clampFontSize(editorFontSize || DEFAULT_EDITOR_FONT_SIZE);
+            body.style.setProperty('--editor-fs', `${fontSize}px`);
+            body.style.setProperty('--editor-lh', `${Math.round(fontSize * 1.7)}px`);
             body.style.setProperty('--special-urgent', getSpecialColor('urgent'));
             body.style.setProperty('--special-question', getSpecialColor('question'));
             body.style.setProperty('--special-defer', getSpecialColor('defer'));
@@ -3144,10 +3181,26 @@
 
             cacheDomRefs();
             validateStateIntegrity('init');
-            applyTheme(); setupListeners();
+            applyTheme(); 
+            try {
+                setupListeners();
+            } catch (e) {
+                console.error('[SETUP ERROR]', e);
+            }
         }
 
         function setupListeners() {
+            // Setup critical toggle buttons first
+            if (domRefs['toggle-hide-completed']) {
+                domRefs['toggle-hide-completed'].onclick = () => {
+                    const t = getActiveTab(); if (!t) return;
+                    t.hideCompletedLines = !t.hideCompletedLines;
+                    invalidateTabCaches(t.id);
+                    saveToStorage();
+                    requestRender('editor');
+                };
+            }
+            
             window.addEventListener('beforeunload', flushSaveToStorage);
             document.addEventListener('keydown', handleSelectedRangeDelete);
             document.addEventListener('keydown', handleSelectedRangeTab);
@@ -3164,10 +3217,10 @@
             });
             document.addEventListener('mousemove', handlePendingLineDrag);
             document.addEventListener('mouseup', endDragSelection);
-            domRefs['add-tab-btn'].onclick = () => addTab();
-            domRefs['duplicate-tab-btn'].onclick = () => duplicateActiveTab();
-            domRefs['import-btn'].onclick = () => domRefs['file-input'].click();
-            domRefs['export-tab-btn'].onclick = () => {
+            if (domRefs['add-tab-btn']) domRefs['add-tab-btn'].onclick = () => addTab();
+            if (domRefs['duplicate-tab-btn']) domRefs['duplicate-tab-btn'].onclick = () => duplicateActiveTab();
+            if (domRefs['import-btn']) domRefs['import-btn'].onclick = () => domRefs['file-input'].click();
+            if (domRefs['export-tab-btn']) domRefs['export-tab-btn'].onclick = () => {
                 const t = state.tabs.find(x => x.id === state.activeTabId);
                 if (t) {
                     triggerDownload(t.title, t.content);
@@ -3248,6 +3301,18 @@
                     applyTheme();
                 }, { save: true });
             };
+            domRefs['zoom-out-btn'].onclick = () => {
+                mutateState(() => {
+                    state.theme.editorFontSize = clampFontSize((state.theme.editorFontSize || DEFAULT_EDITOR_FONT_SIZE) - EDITOR_FONT_SIZE_STEP);
+                    applyTheme();
+                }, { save: true });
+            };
+            domRefs['zoom-in-btn'].onclick = () => {
+                mutateState(() => {
+                    state.theme.editorFontSize = clampFontSize((state.theme.editorFontSize || DEFAULT_EDITOR_FONT_SIZE) + EDITOR_FONT_SIZE_STEP);
+                    applyTheme();
+                }, { save: true });
+            };
             domRefs['hex-accent'].oninput = (e) => {
                 if (!/^[0-9A-Fa-f]{6}$/.test(e.target.value)) return;
                 mutateState(() => {
@@ -3321,19 +3386,26 @@
             };
             domRefs['toggle-outline-mode'].onclick = () => {
                 const t = getActiveTab(); if (!t) return;
-                mutateState(() => { t.outlineModeActive = !t.outlineModeActive; }, { render: 'editor', save: true });
+                t.outlineModeActive = !t.outlineModeActive;
+                invalidateTabCaches(t.id);
+                saveToStorage();
+                requestRender('editor');
             };
             domRefs['outline-level-filter-btn'].onclick = () => cycleOutlineLevelFilter(state.activeTabId);
-            domRefs['toggle-hide-completed'].onclick = () => {
-                const t = getActiveTab(); if (!t) return;
-                mutateState(() => { t.hideCompletedLines = !t.hideCompletedLines; }, { render: 'editor', save: true });
-            };
-            domRefs['transform-upper-btn'].onclick = () => transformSelectedText('upper');
-            domRefs['transform-lower-btn'].onclick = () => transformSelectedText('lower');
-            domRefs['transform-sentence-btn'].onclick = () => transformSelectedText('sentence');
-            domRefs['transform-title-btn'].onclick = () => transformSelectedText('title');
+            if (domRefs['transform-upper-btn']) {
+                domRefs['transform-upper-btn'].onclick = () => transformSelectedText('upper');
+            }
+            if (domRefs['transform-lower-btn']) {
+                domRefs['transform-lower-btn'].onclick = () => transformSelectedText('lower');
+            }
+            if (domRefs['transform-sentence-btn']) {
+                domRefs['transform-sentence-btn'].onclick = () => transformSelectedText('sentence');
+            }
+            if (domRefs['transform-title-btn']) {
+                domRefs['transform-title-btn'].onclick = () => transformSelectedText('title');
+            }
         }
 
-        window.onload = init;
+        document.addEventListener('DOMContentLoaded', init);
 
 

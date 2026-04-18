@@ -121,9 +121,9 @@
                 rgba(31, 191, 74, 0.08) 0px,
                 rgba(31, 191, 74, 0.08) 1px,
                 transparent 1px,
-                transparent 24px
+                transparent var(--editor-lh)
             ) !important;
-            background-size: 100% 24px !important;
+            background-size: 100% var(--editor-lh) !important;
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -654,6 +654,8 @@
             border: 1px solid var(--input-border) !important;
             background-color: var(--input-bg) !important;
             color: var(--input-text) !important;
+            white-space: pre;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         }
 
         #text-transform-group .stable-btn:disabled {
@@ -685,10 +687,10 @@
 
         .zebra-mode {
             background-image: linear-gradient(
-                var(--editor-bg) 0px, var(--editor-bg) 24px,
-                var(--editor-stripe) 24px, var(--editor-stripe) 48px
+                var(--editor-bg) 0px, var(--editor-bg) calc(var(--editor-lh) * 1),
+                var(--editor-stripe) calc(var(--editor-lh) * 1), var(--editor-stripe) calc(var(--editor-lh) * 2)
             ) !important;
-            background-size: 100% 48px !important;
+            background-size: 100% calc(var(--editor-lh) * 2) !important;
             background-attachment: local !important;
         }
 
