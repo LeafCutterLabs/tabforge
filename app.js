@@ -24,7 +24,6 @@
         };
         const DEFAULT_THEME_ACCENTS = {
             default: '#2563eb',
-            light: '#2563eb',
             dark: '#2563eb',
             matrix: '#16A34A'
         };
@@ -39,7 +38,7 @@
             return DEFAULT_THEME_ACCENTS[mode] || DEFAULT_THEME_ACCENTS.default;
         }
         const { createTabRecord, hydrateTabRecord } = window.TabForgeTabModel;
-        const { getStorageKeys, safeParseJSON, normalizeThemePayload, serializeStatePayload } = window.TabForgePersistence;
+        const { getStorageKeys, safeParseJSON, normalizeThemePayload, serializeStatePayload, hasUsableTabs, createStateWriter } = window.TabForgePersistence;
         const { createTabState, closeTabState } = window.TabForgeCommands;
 
         let state = {
@@ -65,20 +64,26 @@
         };
 
         let draggedTabId = null;
-        const historyByTab = {};
+        const historyByTab = Object.create(null);
         const globalActionHistory = { undo: [], redo: [] };
-        const typingHistoryByTab = {};
+        const typingHistoryByTab = Object.create(null);
         const lineCache = new Map();
         const structureCache = new Map();
         const visibleStateCache = new Map();
         const searchResultsCache = new Map();
+        const statsCache = new Map();
+        const searchLineIndexes = new WeakMap();
         const domRefs = {};
         let suppressHistory = false;
         let saveTimer = null;
+        let saveMaxTimer = null;
+        let saveState = 'saved';
+        let settingsHideTimer = null;
         let renderFrame = null;
         let pendingRender = { layout: false, tabs: false, editor: false, toolbar: false, find: false };
         const TAB_RENAME_HOVER_MS = 800;
-        const SAVE_DEBOUNCE_MS = 120;
+        const SAVE_DEBOUNCE_MS = 500;
+        const SAVE_MAX_WAIT_MS = 2000;
         const MAX_CACHE_ENTRIES = 300;
         const TYPING_HISTORY_COALESCE_MS = 900;
         const MARKER_SCROLL_MIN_THUMB_PX = 24;
@@ -90,6 +95,7 @@
         const STORAGE_KEY_ACTIVE = STORAGE_KEYS.active;
         const STORAGE_KEY_THEME = STORAGE_KEYS.theme;
         const STORAGE_KEY_RECOVERY = STORAGE_KEYS.recovery;
+        const persistState = createStateWriter(safeStorageSet, STORAGE_KEYS);
 
         function setCachedValue(map, key, value) {
             if (map.has(key)) map.delete(key);
@@ -123,15 +129,6 @@
                 console.warn(`[tabForge] storage write failed for ${key}`, error);
                 return false;
             }
-        }
-
-        function getCachePrefix(key) {
-            return String(key).split('::', 1)[0];
-        }
-
-        function matchesTabCacheKey(key, tabId) {
-            const prefix = getCachePrefix(key);
-            return prefix === tabId || prefix.startsWith(`${tabId}:`);
         }
 
         function cacheDomRefs() {
@@ -234,7 +231,8 @@
                 cancelAnimationFrame(renderFrame);
                 renderFrame = null;
             }
-            const nextFlags = { ...flags };
+            const nextFlags = { ...pendingRender };
+            mergeRenderFlags(nextFlags, flags);
             pendingRender = { layout: false, tabs: false, editor: false, toolbar: false, find: false };
             if (nextFlags.layout) applyLayoutClasses();
             const hasSearchQuery = Boolean(state.search.query.trim());
@@ -665,7 +663,7 @@
 
         function getTabLines(tab) {
             if (!tab) return [''];
-            return getTabStructure(tab).lines;
+            return getCachedLines(tab.content || '', tab.id || 'tab');
         }
 
         function getLineDepth(rawLine) {
@@ -693,11 +691,19 @@
                 .replace(/'/g, '&#39;');
         }
 
-        function getSearchResultsForLine(lineIndex) {
-            if (!state.search.query || !state.search.results.length) return [];
-            return state.search.results
-                .map((result, index) => ({ ...result, resultIndex: index }))
-                .filter(result => result.lineIndex === lineIndex);
+        function getSearchResultsForLine(lineIndex, tabId = state.activeTabId) {
+            if (!state.search.query.trim()) return [];
+            const results = tabId === state.activeTabId ? state.search.results : buildSearchResults(getTabById(tabId));
+            let byLine = searchLineIndexes.get(results);
+            if (!byLine) {
+                byLine = new Map();
+                results.forEach((result, resultIndex) => {
+                    if (!byLine.has(result.lineIndex)) byLine.set(result.lineIndex, []);
+                    byLine.get(result.lineIndex).push({ ...result, resultIndex });
+                });
+                searchLineIndexes.set(results, byLine);
+            }
+            return byLine.get(lineIndex) || [];
         }
 
         function collectTokenRanges(text) {
@@ -709,9 +715,9 @@
             }));
         }
 
-        function renderInlineHighlights(text, lineIndex) {
+        function renderInlineHighlights(text, lineIndex, tabId = state.activeTabId) {
             const tokenRanges = collectTokenRanges(text);
-            const searchRanges = getSearchResultsForLine(lineIndex);
+            const searchRanges = getSearchResultsForLine(lineIndex, tabId);
             const boundaries = new Set([0, text.length]);
 
             tokenRanges.forEach(range => {
@@ -737,7 +743,7 @@
                 if (tokenRange) classes.push(tokenRange.className);
                 if (searchRange) {
                     classes.push('search-hit');
-                    if (searchRange.resultIndex === state.search.currentIndex) classes.push('search-hit-current');
+                    if (tabId === state.activeTabId && searchRange.resultIndex === state.search.currentIndex) classes.push('search-hit-current');
                 }
                 const style = tokenRange ? ` style="--token-color: ${tokenRange.color}"` : '';
                 html += classes.length ? `<span class="${classes.join(' ')}"${style}>${segmentText}</span>` : segmentText;
@@ -746,34 +752,24 @@
             return html;
         }
 
-        function setLineDisplayContent(lineEl, text, isEditing = false, lineIndex = null) {
+        function setLineDisplayContent(lineEl, text, isEditing = false, lineIndex = null, tabId = state.activeTabId) {
             lineEl.classList.toggle('empty', !text);
             if (isEditing) {
                 lineEl.textContent = text;
                 return;
             }
-            lineEl.innerHTML = renderInlineHighlights(text, lineIndex);
-        }
-
-        function getIndentGuidePositions(depth) {
-            if (depth < 1) return [];
-            return Array.from({ length: depth }, (_, index) => 12 + index * 20);
+            lineEl.innerHTML = renderInlineHighlights(text, lineIndex, tabId);
         }
 
         function applyIndentGuides(lineEl, depth) {
-            const positions = getIndentGuidePositions(depth);
-            if (!positions.length) {
+            if (depth < 1) {
                 lineEl.classList.remove('has-guides');
-                lineEl.style.backgroundImage = '';
-                lineEl.style.backgroundSize = '';
-                lineEl.style.backgroundPosition = '';
+                lineEl.style.removeProperty('--indent-guide-position');
                 return;
             }
 
             lineEl.classList.add('has-guides');
-            lineEl.style.backgroundImage = positions.map(() => 'linear-gradient(to bottom, rgba(148, 163, 184, 0.28), rgba(148, 163, 184, 0.28))').join(',');
-            lineEl.style.backgroundSize = positions.map(() => '1px 100%').join(',');
-            lineEl.style.backgroundPosition = positions.map(position => `${position}px 0`).join(',');
+            lineEl.style.setProperty('--indent-guide-position', `${12 + ((depth - 1) * 20)}px`);
         }
 
         function hexToRgb(hex) {
@@ -871,7 +867,6 @@
         function getVisibleStateCacheKey(tab) {
             return [
                 tab?.id || '',
-                tab?.content || '',
                 JSON.stringify(tab?.collapsedLines || []),
                 tab?.outlineModeActive ? 'outline-on' : 'outline-off',
                 tab?.hideCompletedLines ? 'hide-completed' : 'show-completed',
@@ -884,25 +879,17 @@
         function getSearchCacheKey(tab, query = state.search.query, fuzzy = state.search.fuzzy) {
             return [
                 tab?.id || '',
-                tab?.content || '',
                 query.trim().toLowerCase(),
                 fuzzy ? '1' : '0'
             ].join('::');
         }
 
         function invalidateTabCaches(tabId) {
-            for (const key of lineCache.keys()) {
-                if (matchesTabCacheKey(key, tabId)) lineCache.delete(key);
-            }
-            for (const key of structureCache.keys()) {
-                if (matchesTabCacheKey(key, tabId)) structureCache.delete(key);
-            }
-            for (const key of visibleStateCache.keys()) {
-                if (key.startsWith(`${tabId}::`)) visibleStateCache.delete(key);
-            }
-            for (const key of searchResultsCache.keys()) {
-                if (key.startsWith(`${tabId}::`)) searchResultsCache.delete(key);
-            }
+            // Content caches validate their own source strings, including the
+            // manual revision, which should remain reusable while typing.
+            visibleStateCache.delete(tabId);
+            searchResultsCache.delete(tabId);
+            statsCache.delete(tabId);
         }
 
         function invalidateSearchCache() {
@@ -910,15 +897,16 @@
         }
 
         function getCachedLines(content = '', cacheKey = 'global') {
-            const key = `${cacheKey}::${content}`;
-            if (lineCache.has(key)) return lineCache.get(key);
+            const cached = lineCache.get(cacheKey);
+            if (cached?.content === content) return cached.lines;
             const lines = String(content).split('\n');
-            return setCachedValue(lineCache, key, lines);
+            setCachedValue(lineCache, cacheKey, { content, lines });
+            return lines;
         }
 
         function getCachedStructure(content = '', cacheKey = 'global') {
-            const key = `${cacheKey}::${content}`;
-            if (structureCache.has(key)) return structureCache.get(key);
+            const cached = structureCache.get(cacheKey);
+            if (cached?.content === content) return cached.structure;
 
             const lines = getCachedLines(content, cacheKey);
             const depths = lines.map(getLineDepth);
@@ -939,7 +927,9 @@
             }
 
             const descendantCounts = subtreeEnds.map((endIndex, index) => Math.max(0, endIndex - index));
-            return setCachedValue(structureCache, key, { lines, depths, subtreeEnds, descendantCounts });
+            const structure = { lines, depths, subtreeEnds, descendantCounts };
+            setCachedValue(structureCache, cacheKey, { content, structure });
+            return structure;
         }
 
         function getTabStructure(tab) {
@@ -973,23 +963,30 @@
             return getDisplayText(rawLine);
         }
 
-        function levenshteinDistance(a, b) {
-            const rows = a.length + 1;
-            const cols = b.length + 1;
-            const dp = Array.from({ length: rows }, () => Array(cols).fill(0));
-            for (let i = 0; i < rows; i++) dp[i][0] = i;
-            for (let j = 0; j < cols; j++) dp[0][j] = j;
-            for (let i = 1; i < rows; i++) {
-                for (let j = 1; j < cols; j++) {
-                    const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-                    dp[i][j] = Math.min(
-                        dp[i - 1][j] + 1,
-                        dp[i][j - 1] + 1,
-                        dp[i - 1][j - 1] + cost
-                    );
+        function levenshteinDistance(a, b, limit = Math.max(a.length, b.length)) {
+            if (a === b) return 0;
+            if (Math.abs(a.length - b.length) > limit) return limit + 1;
+            if (a.length < b.length) [a, b] = [b, a];
+            if (!b.length) return Math.min(a.length, limit + 1);
+            // Only the band within the allowed distance can contain a match.
+            let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+            let current = new Array(b.length + 1).fill(Infinity);
+            for (let i = 1; i <= a.length; i++) {
+                const start = Math.max(1, i - limit);
+                const end = Math.min(b.length, i + limit);
+                current[0] = i;
+                if (start > 1) current[start - 1] = Infinity;
+                let minimum = Infinity;
+                for (let j = start; j <= end; j++) {
+                    current[j] = Math.min(previous[j] + 1, current[j - 1] + 1,
+                        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+                    minimum = Math.min(minimum, current[j]);
                 }
+                if (minimum > limit) return limit + 1;
+                if (end < b.length) current[end + 1] = Infinity;
+                [previous, current] = [current, previous];
             }
-            return dp[a.length][b.length];
+            return Math.min(previous[b.length], limit + 1);
         }
 
         function getFuzzyMatches(text, query) {
@@ -1003,7 +1000,7 @@
             while ((match = tokenRegex.exec(text)) !== null) {
                 const token = match[0];
                 if (Math.abs(token.length - normalizedQuery.length) > allowedDistance) continue;
-                if (levenshteinDistance(token.toLowerCase(), normalizedQuery) <= allowedDistance) {
+                if (levenshteinDistance(token.toLowerCase(), normalizedQuery, allowedDistance) <= allowedDistance) {
                     matches.push({ start: match.index, end: match.index + token.length });
                 }
             }
@@ -1014,7 +1011,8 @@
         function buildSearchResults(tab) {
             if (!tab || !state.search.query.trim()) return [];
             const cacheKey = getSearchCacheKey(tab);
-            if (searchResultsCache.has(cacheKey)) return searchResultsCache.get(cacheKey);
+            const cached = searchResultsCache.get(tab.id);
+            if (cached?.key === cacheKey && cached.content === tab.content) return cached.results;
             const query = state.search.query.trim();
             const normalizedQuery = query.toLowerCase();
             const lines = getTabLines(tab);
@@ -1041,7 +1039,8 @@
                 }
             });
 
-            return setCachedValue(searchResultsCache, cacheKey, results);
+            setCachedValue(searchResultsCache, tab.id, { key: cacheKey, content: tab.content, results });
+            return results;
         }
 
         function countMatchesInOtherTabs() {
@@ -1288,7 +1287,7 @@
             if (tab.content === savedContent) return;
             recordTabHistory(tabId);
             tab.collapsedLines = [];
-            updateTabLines(tabId, getCachedLines(savedContent, `${tabId}:restore`), 0, 0);
+            updateTabLines(tabId, getCachedLines(savedContent, `${tabId}:restore`), 0, 0, { historyRecorded: true });
         }
 
         function ensureTabHistory(tabId) {
@@ -1335,7 +1334,10 @@
             if (sameTabSnapshot(last, snapshot)) return;
             const now = Date.now();
             const typingState = typingHistoryByTab[tabId];
-            if (options.coalesceTyping && typingState && (now - typingState.at) <= TYPING_HISTORY_COALESCE_MS) {
+            const lastAction = globalActionHistory.undo[globalActionHistory.undo.length - 1];
+            if (options.coalesceTyping && typingState && lastAction?.type === 'tab-edit'
+                && lastAction.tabId === tabId && typingState.lineIndex === state.activeLineIndex
+                && (now - typingState.at) <= TYPING_HISTORY_COALESCE_MS) {
                 history.redo = [];
                 globalActionHistory.redo = [];
                 typingState.at = now;
@@ -1345,7 +1347,7 @@
             if (history.undo.length > 100) history.undo.shift();
             history.redo = [];
             recordGlobalAction({ type: 'tab-edit', tabId });
-            if (options.coalesceTyping) typingHistoryByTab[tabId] = { at: now };
+            if (options.coalesceTyping) typingHistoryByTab[tabId] = { at: now, lineIndex: state.activeLineIndex };
             else delete typingHistoryByTab[tabId];
         }
 
@@ -1355,6 +1357,7 @@
             const history = ensureTabHistory(tabId);
             const source = direction === 'undo' ? history.undo : history.redo;
             if (!source.length) return;
+            delete typingHistoryByTab[tabId];
 
             const current = snapshotTabState(tabId);
             const target = source.pop();
@@ -1362,14 +1365,17 @@
             if (current) other.push(current);
 
             suppressHistory = true;
-            tab.content = target.content;
-            tab.collapsedLines = [...target.collapsedLines];
-            state.activeTabId = tabId;
-            state.activeLineIndex = target.activeLineIndex;
-            updateContent(tabId, tab.content);
-            saveToStorage();
-            requestRender('editor', { immediate: true });
-            suppressHistory = false;
+            try {
+                tab.collapsedLines = [...target.collapsedLines];
+                state.activeTabId = tabId;
+                state.activeLineIndex = target.activeLineIndex;
+                updateContent(tabId, target.content);
+                invalidateTabCaches(tabId);
+                saveToStorage();
+                requestRender({ tabs: true, editor: true, toolbar: true, find: true }, { immediate: true });
+            } finally {
+                suppressHistory = false;
+            }
 
             requestAnimationFrame(() => {
                 const line = getLineEditor(tabId, state.activeLineIndex);
@@ -1423,10 +1429,12 @@
             if (action.type === 'close-tab') {
                 restoreClosedTab(action);
                 globalActionHistory.redo.push(action);
+                requestRender({ toolbar: true });
                 return;
             }
             restoreTabHistory(action.tabId, 'undo', { fromGlobal: true });
             globalActionHistory.redo.push(action);
+            requestRender({ toolbar: true });
         }
 
         function performRedo() {
@@ -1435,15 +1443,18 @@
             if (action.type === 'close-tab') {
                 recloseTabFromAction(action);
                 globalActionHistory.undo.push(action);
+                requestRender({ toolbar: true });
                 return;
             }
             restoreTabHistory(action.tabId, 'redo', { fromGlobal: true });
             globalActionHistory.undo.push(action);
+            requestRender({ toolbar: true });
         }
 
         function getVisibleLineState(tab) {
             const cacheKey = getVisibleStateCacheKey(tab);
-            if (visibleStateCache.has(cacheKey)) return visibleStateCache.get(cacheKey);
+            const cached = visibleStateCache.get(tab.id);
+            if (cached?.key === cacheKey && cached.content === tab.content) return cached.result;
             const structure = getTabStructure(tab);
             const { lines, depths, descendantCounts } = structure;
             const collapsed = getCollapsedLineSet(tab);
@@ -1475,18 +1486,30 @@
             }
 
             const result = { lines, visible };
-            return setCachedValue(visibleStateCache, cacheKey, result);
+            setCachedValue(visibleStateCache, tab.id, { key: cacheKey, content: tab.content, result });
+            return result;
         }
 
-        function getOutlineLevelCounts(tab) {
+        function getTabStats(tab) {
+            const cached = statsCache.get(tab.id);
+            if (cached?.content === tab.content) return cached;
             const counts = [];
-            getTabLines(tab).forEach(line => {
+            const lines = getCachedLines(tab.content, tab.id);
+            lines.forEach(line => {
                 const info = getSymbolInfo(line);
                 if (!info) return;
                 const level = Math.max(1, info.indent + 1);
                 counts[level - 1] = (counts[level - 1] || 0) + 1;
             });
-            return counts;
+            const words = tab.content.match(/\S+/g)?.length || 0;
+            return setCachedValue(statsCache, tab.id, {
+                content: tab.content, words, chars: tab.content.length, lines: lines.length,
+                readTime: Math.ceil(words / 200) || 1, outlineCounts: counts
+            });
+        }
+
+        function getOutlineLevelCounts(tab) {
+            return getTabStats(tab).outlineCounts;
         }
 
         function getDeepestOutlineLevel(tab) {
@@ -1511,10 +1534,10 @@
             requestRender('editor');
         }
 
-        function updateTabLines(tabId, lines, focusLineIndex = state.activeLineIndex, caretOffset = 0) {
+        function updateTabLines(tabId, lines, focusLineIndex = state.activeLineIndex, caretOffset = 0, options = {}) {
             const tab = getTabById(tabId);
             if (!tab) return;
-            tab.content = lines.join('\n');
+            updateContent(tabId, lines.join('\n'), null, options);
             invalidateTabCaches(tabId);
             state.activeLineIndex = Math.max(0, Math.min(focusLineIndex, lines.length - 1));
             state.pendingCaret = {
@@ -1522,7 +1545,7 @@
                 lineIndex: state.activeLineIndex,
                 offset: Math.max(0, caretOffset)
             };
-            updateContent(tabId, tab.content);
+            saveToStorage();
             requestRender('editor', { immediate: true });
             requestAnimationFrame(() => {
                 const line = getLineEditor(tabId, state.activeLineIndex);
@@ -1640,7 +1663,7 @@
 
             recordTabHistory(tabId);
             tab.collapsedLines = moved.collapsedLines;
-            updateTabLines(tabId, moved.lines, moved.movedStart, 0);
+            updateTabLines(tabId, moved.lines, moved.movedStart, 0, { historyRecorded: true });
         }
 
         function shiftLineRange(lines, startIndex, endIndex, delta) {
@@ -1849,9 +1872,17 @@
         function hydrateTabs(savedTabs) {
             if (!Array.isArray(savedTabs) || savedTabs.length === 0) return [createDefaultTab()];
 
+            const ids = new Set();
             const hydrated = savedTabs
-                .filter(tab => tab && typeof tab === 'object')
-                .map((tab, index) => hydrateTabRecord(tab, String(Date.now() + index)));
+                .filter(tab => tab && !Array.isArray(tab) && typeof tab === 'object' && typeof tab.content === 'string')
+                .map(tab => {
+                    const record = hydrateTabRecord(tab, makeTabId());
+                    if (!/^[A-Za-z0-9_.-]+$/.test(record.id) || ids.has(record.id)) {
+                        do { record.id = makeTabId(); } while (ids.has(record.id));
+                    }
+                    ids.add(record.id);
+                    return record;
+                });
 
             return hydrated.length ? hydrated : [createDefaultTab()];
         }
@@ -1898,6 +1929,7 @@
                 el.onclick = () => {
                     if (state.activeTabId === tab.id) return;
                     state.activeTabId = tab.id;
+                    saveToStorage();
                     requestRender('full');
                 };
                 
@@ -1905,7 +1937,7 @@
                     <button class="mv-toggle ${mvStatusClass} flex items-center justify-center transition-colors text-current" title="${isSelected ? `Multi-view position ${mvIndex + 1}` : 'Add to multi-view'}" aria-label="${isSelected ? `Multi-view position ${mvIndex + 1}` : 'Add to multi-view'}">
                         ${isSelected ? `<span class="multi-view-index">${mvIndex + 1}</span>` : '<i data-lucide="file-text"></i>'}
                     </button>
-                    <span class="tab-title truncate flex-1">${tab.title}</span>
+                    <span class="tab-title truncate flex-1">${escapeHtml(tab.title)}</span>
                     <button class="close-tab transition-colors" title="Close tab" aria-label="Close tab">
                         <i data-lucide="x" class="w-3 h-3"></i>
                     </button>
@@ -1937,12 +1969,13 @@
                 el.querySelector('.close-tab').onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
                 container.appendChild(el);
             });
-            lucide.createIcons();
+            window.lucide?.createIcons();
         }
 
         function setViewModeIcon(mode) {
             const icon = domRefs['view-mode-icon'];
-            if (!icon) return;
+            if (!icon || icon.dataset.viewMode === mode) return;
+            icon.dataset.viewMode = mode;
             if (mode === 'single') {
                 icon.innerHTML = `
                     <rect x="4" y="4" width="16" height="16" rx="1"></rect>
@@ -2004,9 +2037,7 @@
                 tick.type = 'button';
                 tick.className = 'marker-tick';
                 tick.style.top = `${Math.max(0, Math.min(100, top))}%`;
-                tick.style.background = colors.length > 1
-                    ? `linear-gradient(90deg, ${colors.join(', ')})`
-                    : colors[0];
+                tick.style.backgroundColor = colors[0];
                 tick.title = `Line ${marker.index + 1}: ${getDisplayText(marker.raw).slice(0, 80) || '(blank)'}`;
                 tick.onclick = (event) => {
                     event.preventDefault();
@@ -2117,14 +2148,14 @@
             wrap.dataset.editorTab = tab.id;
             if (tab.showWordWrap) wrap.classList.add('word-wrap-enabled');
             const root = document.createElement('div');
-            root.className = "outline-root min-h-full " + (tab.showZebra && !tab.showWordWrap ? 'zebra-mode' : '');
+            root.className = "outline-root min-h-full";
             const { lines, visible } = getVisibleLineState(tab);
             const savedLines = getManualSavedLines(tab);
 
-            visible.forEach((node, visibleIndex) => {
+            visible.forEach((node) => {
                 const row = document.createElement('div');
                 row.className = "outline-row";
-                if (tab.showZebra && tab.showWordWrap && visibleIndex % 2 === 1) row.classList.add('zebra-row-alt');
+                if (tab.showZebra && node.index % 2 === 1) row.classList.add('zebra-row-alt');
                 row.dataset.rowIndex = String(node.index);
                 row.dataset.tabId = tab.id;
                 const isRowSelected = isLineIndexSelected(tab.id, node.index);
@@ -2172,7 +2203,7 @@
                 line.dataset.lineIndex = String(node.index);
                     line.className = "outline-line" + (node.text ? "" : " empty");
                 line.style.paddingLeft = `calc(${node.depth} * 20px + var(--text-indent))`;
-                setLineDisplayContent(line, node.text, false, node.index);
+                setLineDisplayContent(line, node.text, false, node.index, tab.id);
                 applyIndentGuides(line, node.depth);
 
                 line.onfocus = () => {
@@ -2203,8 +2234,8 @@
 
                 line.onblur = () => {
                     const latestLineText = getDisplayText((getTabLines(getTabById(tab.id))[node.index]) || (line.textContent || ''));
-                    setLineDisplayContent(line, latestLineText, false, node.index);
-                    applyRowHighlight(row, "\t".repeat(getLineDepth((getTabLines(getTabById(tab.id))[node.index]) || '')) + latestLineText, node.attentionFlags);
+                    setLineDisplayContent(line, latestLineText, false, node.index, tab.id);
+                    applyRowHighlight(row, latestLineText);
                 };
 
                 line.onmouseenter = () => {
@@ -2286,8 +2317,9 @@
                     const nextRawLine = "\t".repeat(node.depth) + sanitizedText;
                     nextLines[node.index] = nextRawLine;
                     e.currentTarget.classList.toggle('empty', !sanitizedText);
-                    applyRowHighlight(row, nextRawLine, node.attentionFlags);
+                    applyRowHighlight(row, nextRawLine);
                     updateContent(tab.id, nextLines.join('\n'), null, { coalesceTyping: true });
+                    row.classList.toggle('revision-changed', nextRawLine !== (getManualSavedLines(tab)[node.index] || ''));
                 };
 
                 line.onpaste = (e) => {
@@ -2317,6 +2349,7 @@
                 };
 
                 line.onkeydown = (e) => {
+                if (e.isComposing || e.keyCode === 229) return;
                 const currentLines = getTabLines(getTabById(tab.id));
                 const currentText = e.currentTarget.textContent;
                 const caretOffset = getCaretOffset(e.currentTarget);
@@ -2533,7 +2566,7 @@
                     if (tab) {
                         const cell = document.createElement('div');
                         cell.className = "flex flex-col h-full overflow-hidden";
-                        cell.innerHTML = `<div class="mv-cell-header px-3 py-1 flex justify-between items-center font-bold uppercase shrink-0"><span>${tab.title}</span></div>`;
+                        cell.innerHTML = `<div class="mv-cell-header px-3 py-1 flex justify-between items-center font-bold uppercase shrink-0"><span>${escapeHtml(tab.title)}</span></div>`;
                         cell.appendChild(createEditorElement(tab)); 
                         grid.appendChild(cell);
                     }
@@ -2584,12 +2617,7 @@
             domRefs['tabs-side-btn']?.classList.toggle('orientation-active', isVertical);
 
             // Stats Update
-            const content = t.content;
-            const words = content.trim() ? content.trim().split(/\s+/).length : 0;
-            const chars = content.length;
-            const lines = getCachedLines(content, `${t.id}:stats`).length;
-            const readTime = Math.ceil(words / 200) || 1;
-            const outlineCounts = getOutlineLevelCounts(t);
+            const { words, chars, lines, readTime, outlineCounts } = getTabStats(t);
 
             domRefs['status-filename'].innerText = t.title;
             domRefs['stat-lines'].innerText = lines;
@@ -2649,9 +2677,7 @@
             domRefs['restore-save-btn'].title = isTabDirty(t)
                 ? `Jump Back To Last Save (${formatManualSaveTime(t.manualSavedAt)})`
                 : 'Already At Last Save';
-            domRefs['save-status'].innerText = isTabDirty(t)
-                ? 'Autosaved · Revision pending'
-                : `Revision saved ${formatManualSaveTime(t.manualSavedAt)}`;
+            updateSaveStatus();
             domRefs['open-find-btn'].classList.toggle('btn-active', state.search.open);
 
             domRefs['zip-export-toggle'].checked = state.theme.zipExport;
@@ -2660,7 +2686,6 @@
                 domRefs['print-line-numbers-toggle'].checked = Boolean(state.theme.printLineNumbers);
             }
             
-            lucide.createIcons();
         }
 
         function ensureTextFilename(filename) {
@@ -3107,6 +3132,7 @@
 
         function applyTheme() {
             const body = document.body;
+            if (state.theme.mode === 'light') state.theme.mode = 'default';
             const { accent, mode, editorFontSize } = state.theme;
             const defaultAccent = getDefaultAccentForTheme(mode);
             if (accent && accent.toLowerCase() !== defaultAccent.toLowerCase()) {
@@ -3124,7 +3150,7 @@
             body.style.setProperty('--special-done', getSpecialColor('done'));
             body.style.setProperty('--special-mention', getSpecialColor('mention'));
             body.style.setProperty('--special-tag', getSpecialColor('tag'));
-            document.body.classList.remove('theme-light', 'theme-dark', 'theme-matrix');
+            document.body.classList.remove('theme-dark', 'theme-matrix');
             if (mode !== 'default') document.body.classList.add('theme-' + mode);
             domRefs['hex-accent'].value = accent.replace('#', '');
             if (domRefs['accent-color-picker']) domRefs['accent-color-picker'].value = accent;
@@ -3144,38 +3170,41 @@
             requestRender('full');
         }
 
+        function updateSaveStatus() {
+            const status = domRefs['save-status'];
+            if (!status) return;
+            const tab = getActiveTab();
+            status.textContent = saveState === 'error' ? 'Save failed · Export a backup'
+                : saveState === 'pending' ? 'Saving…'
+                : isTabDirty(tab) ? 'Autosaved · Revision pending'
+                : `Revision saved ${formatManualSaveTime(tab?.manualSavedAt)}`;
+            status.setAttribute('role', 'status');
+        }
+
         function flushSaveToStorage() {
             if (saveTimer) {
                 clearTimeout(saveTimer);
                 saveTimer = null;
             }
-            let payload;
+            if (saveMaxTimer) {
+                clearTimeout(saveMaxTimer);
+                saveMaxTimer = null;
+            }
             try {
-                payload = serializePersistenceState();
+                saveState = persistState(serializePersistenceState()) ? 'saved' : 'error';
             } catch (error) {
                 console.warn('[tabForge] save skipped because state could not be serialized', error);
-                return;
+                saveState = 'error';
             }
-            const writes = [
-                safeStorageSet(STORAGE_KEY_TABS, JSON.stringify(payload.tabs)),
-                safeStorageSet(STORAGE_KEY_ACTIVE, payload.activeTabId),
-                safeStorageSet(STORAGE_KEY_THEME, JSON.stringify(payload.themeData)),
-                safeStorageSet(STORAGE_KEY_RECOVERY, JSON.stringify({
-                    savedAt: Date.now(),
-                    ...payload
-                }))
-            ];
-            if (writes.every(Boolean)) {
-                const status = domRefs['save-status'];
-                if (status) status.innerText = "Synced " + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-            }
+            updateSaveStatus();
         }
 
         function saveToStorage() {
             if (saveTimer) clearTimeout(saveTimer);
-            saveTimer = setTimeout(() => {
-                flushSaveToStorage();
-            }, SAVE_DEBOUNCE_MS);
+            if (saveState !== 'error') saveState = 'pending';
+            updateSaveStatus();
+            saveTimer = setTimeout(flushSaveToStorage, SAVE_DEBOUNCE_MS);
+            if (!saveMaxTimer) saveMaxTimer = setTimeout(flushSaveToStorage, SAVE_MAX_WAIT_MS);
         }
 
         function addTab(title = 'untitled.txt', content = '') {
@@ -3221,13 +3250,17 @@
 
         function updateContent(id, content, textarea, options = {}) {
             const t = getTabById(id); if (!t) return;
-            if (t.content !== content) recordTabHistory(id, undefined, { coalesceTyping: Boolean(options.coalesceTyping) });
+            if (t.content === content) return;
+            const previousTitle = t.title;
+            const wasDirty = isTabDirty(t);
+            if (!options.historyRecorded) recordTabHistory(id, undefined, { coalesceTyping: Boolean(options.coalesceTyping) });
             t.content = content;
             invalidateTabCaches(id);
-            let shouldRenderTabs = true;
             if (!t.manuallyRenamed) {
-                t.title = deriveTitleFromText(getCachedLines(content, `${id}:title`)[0]);
+                const newline = content.indexOf('\n');
+                t.title = deriveTitleFromText(newline < 0 ? content : content.slice(0, newline));
             }
+            const shouldRenderTabs = previousTitle !== t.title || wasDirty !== isTabDirty(t);
             saveToStorage();
             if (shouldRenderTabs || id === state.activeTabId) {
                 requestRender({
@@ -3243,6 +3276,7 @@
         function toggleSettings(open) {
             const menu = domRefs['settings-menu'], overlay = domRefs['settings-overlay'];
             if (!menu || !overlay) return;
+            clearTimeout(settingsHideTimer);
             if (open) {
                 menu.classList.add('open');
                 overlay.classList.remove('hidden');
@@ -3253,7 +3287,7 @@
             menu.classList.remove('open');
             overlay.style.opacity = "0";
             overlay.style.pointerEvents = 'none';
-            setTimeout(() => { overlay.classList.add('hidden'); }, 200);
+            settingsHideTimer = setTimeout(() => { overlay.classList.add('hidden'); }, 200);
         }
 
         function init() {
@@ -3264,8 +3298,8 @@
             let primaryStateLoaded = false;
 
             const parsedTabs = safeParseJSON(savedTabs, null);
-            state.tabs = parsedTabs ? hydrateTabs(parsedTabs) : [createDefaultTab()];
-            primaryStateLoaded = Boolean(parsedTabs);
+            primaryStateLoaded = hasUsableTabs(parsedTabs);
+            state.tabs = primaryStateLoaded ? hydrateTabs(parsedTabs) : [createDefaultTab()];
 
             state.activeTabId = getTabById(savedActiveId) ? savedActiveId : state.tabs[0].id;
 
@@ -3283,9 +3317,9 @@
                 }
             }
 
-            const shouldUseRecovery = !primaryStateLoaded && Boolean(savedRecovery);
+            const recovery = safeParseJSON(savedRecovery, null);
+            const shouldUseRecovery = hasUsableTabs(recovery?.tabs) && (!primaryStateLoaded || recovery.version === 1);
             if (shouldUseRecovery && savedRecovery) {
-                const recovery = safeParseJSON(savedRecovery, null);
                 if (recovery) {
                     state.tabs = hydrateTabs(recovery.tabs);
                     state.activeTabId = getTabById(recovery.activeTabId) ? recovery.activeTabId : state.tabs[0].id;
@@ -3346,6 +3380,10 @@
             }
             
             window.addEventListener('beforeunload', flushSaveToStorage);
+            window.addEventListener('pagehide', flushSaveToStorage);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') flushSaveToStorage();
+            });
             document.addEventListener('keydown', handleSelectedRangeDelete);
             document.addEventListener('keydown', handleSelectedRangeTab);
             document.addEventListener('keydown', handleUndoRedoShortcuts);
@@ -3354,7 +3392,7 @@
             document.addEventListener('copy', handleSelectedRangeCopy);
             document.addEventListener('cut', handleSelectedRangeCut);
             document.addEventListener('paste', handleSelectedRangePaste);
-            document.addEventListener('selectionchange', () => updateToolbarUI());
+            document.addEventListener('selectionchange', () => requestRender({ toolbar: true }));
             document.addEventListener('keydown', (e) => updateHoveredLineDragReady(e.shiftKey));
             document.addEventListener('keyup', (e) => {
                 if (e.key === 'Shift') updateHoveredLineDragReady(false);
