@@ -17,3 +17,5 @@ function measure(name, operation) {
 }
 measure('2,000 line search lookups', () => app.run('for (let i = 0; i < 2000; i++) getSearchResultsForLine(i)'));
 measure('100 repeated outline statistics reads', () => app.run('for (let i = 0; i < 100; i++) getOutlineLevelCounts(getActiveTab())'));
+app.run(String.raw`getActiveTab().content = Array.from({length:5000}, (_,index) => 'line ' + index).join('\n'); setSelectedLineRange('bench', 0, 4999)`);
+measure('5,000 selected-line membership checks', () => app.run('for (let i = 0; i < 5000; i++) isLineIndexSelected("bench", i)'));

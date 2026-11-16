@@ -1,0 +1,31 @@
+name: Checks
+on:
+  push:
+    branches: [tabforge-lite]
+  pull_request:
+    branches: [tabforge-lite]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression-and-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Check committed assets are current
+        run: git diff --exit-code -- assets
+      - run: npx playwright install --with-deps chromium
+      - run: npm run check
+      - run: npm run benchmark
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure()
+        with:
+          name: browser-output
+          path: output/playwright

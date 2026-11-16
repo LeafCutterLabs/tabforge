@@ -450,3 +450,73 @@ test('immediate undo cancels stale editing focus so the restored line selection 
     assert.equal(app.run('getActiveTab().content'), 'zero\none\ntwo');
     assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1]);
 });
+
+test('deleting above a folded parent preserves its nested folds and undo/redo', () => {
+    for (const outlineModeActive of [false, true]) {
+        const app = lineApp('intro\nparent\n\tchild\n\t\tgrandchild\nlast', { collapsedLines: [1, 2], outlineModeActive });
+        app.setSingleLineSelection('a', 0);
+        app.deleteSelectedRangeLines();
+        assert.equal(app.run('getActiveTab().content'), 'parent\n\tchild\n\t\tgrandchild\nlast');
+        assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [0, 1]);
+        assert.deepEqual(plain(app.run('getVisibleLineState(getActiveTab()).visible.map(row => row.index)')), [0, 3]);
+        app.performUndo();
+        assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [1, 2]);
+        app.performRedo();
+        assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [0, 1]);
+    }
+});
+
+test('inserting and splitting before a parent shifts folds without matching duplicate text', () => {
+    const app = lineApp('parent\nparent\n\tchild\nlast', { collapsedLines: [1] });
+    app.applyTabLineEdits('a', [{ start: 0, deleteCount: 0, inserted: ['new', 'new'] }], 0);
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [3]);
+    app.applyTabLineEdits('a', [{ start: 3, deleteCount: 1, inserted: ['', 'parent'], preserveAt: 1 }], 4);
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [4]);
+    assert.deepEqual(plain(app.run('getVisibleLineState(getActiveTab()).visible.map(row => row.index)')), [0, 1, 2, 3, 4, 6]);
+});
+
+test('merging with a folded parent retains its fold on the merged line', () => {
+    const app = lineApp('prefix\nparent\n\tchild\nlast', { collapsedLines: [1] });
+    app.applyTabLineEdits('a', [{ start: 0, deleteCount: 2, inserted: ['prefixparent'], preserveAt: 0 }], 0, 6);
+    assert.equal(app.run('getActiveTab().content'), 'prefixparent\n\tchild\nlast');
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [0]);
+    app.performUndo();
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [1]);
+});
+
+test('sparse line replacement remaps folds on each surviving duplicate parent', () => {
+    const app = lineApp('remove\nparent\n\tchild\nremove\nparent\n\tchild\nlast', { collapsedLines: [1, 4] });
+    app.setSelectedLineIndices('a', [0, 3]);
+    app.handleSelectedRangePaste(inputEvent({ clipboardData: { getData: () => 'replacement\nextra' } }));
+    assert.equal(app.run('getActiveTab().content'), 'replacement\nextra\nparent\n\tchild\nparent\n\tchild\nlast');
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [2, 4]);
+    assert.equal(app.run('globalActionHistory.undo.length'), 1);
+    app.performUndo();
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [1, 4]);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [0, 3]);
+});
+
+test('replacing all lines has no extra blank row and deleted parents leave no fold behind', () => {
+    const app = lineApp('parent\n\tchild\nlast', { collapsedLines: [0] });
+    app.setSelectedLineRange('a', 0, 2);
+    app.handleSelectedRangePaste(inputEvent({ clipboardData: { getData: () => 'replacement' } }));
+    assert.equal(app.run('getActiveTab().content'), 'replacement');
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), []);
+    app.setSingleLineSelection('a', 0);
+    app.deleteSelectedRangeLines();
+    assert.equal(app.run('getActiveTab().content'), '');
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), []);
+});
+
+test('large contiguous and sparse selections report membership without enumerating the range', () => {
+    const app = lineApp(Array.from({ length: 5000 }, (_, index) => `line ${index}`).join('\n'));
+    app.setSelectedLineRange('a', 0, 4999);
+    app.run(`getSelectedLineRange = () => { throw new Error('membership must not enumerate a range'); }`);
+    for (let index = 0; index < 5000; index++) assert.equal(app.isLineIndexSelected('a', index), true);
+    assert.equal(app.isLineIndexSelected('a', 5000), false);
+    app.setSelectedLineIndices('a', [0, 2500, 4999]);
+    assert.equal(app.isLineIndexSelected('a', 0), true);
+    assert.equal(app.isLineIndexSelected('a', 1), false);
+    assert.equal(app.isLineIndexSelected('a', 2500), true);
+    assert.equal(app.isLineIndexSelected('a', 4999), true);
+});

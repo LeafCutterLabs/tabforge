@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>tabFORGE</title>
     <link rel="icon" href="data:,">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Library for ZIP packaging -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="./assets/utilities.css">
+    <script src="./assets/icons.js"></script>
+    <script src="./assets/jszip.min.js"></script>
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./editor.css">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <header id="app-header" class="shrink-0">
@@ -126,7 +126,7 @@
 
     <!-- Settings Overlay -->
     <div id="settings-overlay" class="fixed inset-0 bg-black/40 hidden z-[60] transition-opacity duration-200 opacity-0"></div>
-    <aside id="settings-menu" class="fixed top-0 right-0 h-full bg-white border-l border-slate-200 z-[70] p-6 shadow-2xl transition-colors overflow-y-auto text-slate-800">
+    <aside id="settings-menu" class="fixed top-0 right-0 h-full bg-white border-l border-slate-200 z-[70] p-6 transition-colors overflow-y-auto text-slate-800">
         <div class="flex items-center justify-between mb-8">
             <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400">Settings</h2>
             <button id="close-settings-btn" class="p-1 hover:bg-slate-100 rounded text-slate-400"><i data-lucide="x" class="w-4 h-4"></i></button>

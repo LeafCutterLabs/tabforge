@@ -1,0 +1,177 @@
+/* Editor structure, then attention, focus, selection, and drag states. */
+.outline-root {
+    font-size: var(--editor-fs);
+    line-height: var(--editor-lh);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    color: var(--editor-text);
+    box-sizing: border-box;
+    padding: 10px 22px 0 0;
+}
+
+.outline-row {
+    position: relative;
+    display: flex;
+    min-height: var(--editor-lh);
+    align-items: stretch;
+    background: var(--editor-bg);
+}
+
+.outline-row.zebra-row-alt { background: var(--editor-stripe); }
+.outline-row.has-row-highlight {
+    background: var(--row-highlight-bg, transparent);
+    border-left: 3px solid var(--row-highlight-accent, transparent);
+}
+
+.outline-row:focus-within { outline: none; z-index: 1; }
+.outline-row:focus-within::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--accent-color);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.outline-gutter {
+    width: var(--gutter-width);
+    min-height: var(--editor-lh);
+    flex-shrink: 0;
+    border-right: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--line-number-color);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    padding: 0 10px 0 5px;
+    position: relative;
+    user-select: none;
+}
+
+.outline-row:focus-within .outline-gutter { color: var(--accent-color); }
+.outline-gutter.fold-only { width: 30px; padding: 0 4px; }
+.outline-gutter.line-selectable { cursor: grab; }
+.outline-gutter.line-selectable:active { cursor: grabbing; }
+.outline-gutter .line-number-label {
+    min-width: 0;
+    flex: 1;
+    display: inline-flex;
+    justify-content: flex-end;
+    align-self: flex-start;
+    min-height: var(--editor-lh);
+    align-items: center;
+    padding-left: 3px;
+}
+
+.outline-row.revision-changed .outline-gutter::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #ff8a00;
+}
+
+.outline-line {
+    flex: 1;
+    min-width: 0;
+    min-height: var(--editor-lh);
+    line-height: var(--editor-lh);
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
+    outline: none;
+    padding-right: var(--text-indent);
+    caret-color: var(--accent-color);
+    color: var(--editor-text);
+    background: transparent;
+}
+
+.editor-cell.word-wrap-enabled .outline-line { white-space: pre-wrap; overflow-wrap: break-word; }
+.outline-line.drag-ready { cursor: grab; }
+.outline-line.has-guides { position: relative; }
+.outline-line.has-guides::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--indent-guide-position);
+    border-left: 1px solid rgba(148, 163, 184, 0.36);
+    pointer-events: none;
+}
+.outline-line::selection { background: color-mix(in srgb, var(--accent-color) 60%, white 10%); color: white; }
+.outline-line.empty::before { content: "\200b"; }
+
+.line-fold-toggle,
+.line-fold-spacer {
+    flex: 0 0 20px;
+    width: 20px;
+    height: min(20px, var(--editor-lh));
+    align-self: flex-start;
+    margin-top: max(0px, calc((var(--editor-lh) - 20px) / 2));
+}
+.line-fold-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--editor-text);
+    cursor: pointer;
+}
+.line-fold-toggle::before {
+    content: "";
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 6px solid currentColor;
+}
+.line-fold-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+.line-fold-toggle:hover { background: color-mix(in srgb, var(--editor-text) 14%, transparent); }
+.outline-row.is-collapsed .outline-line { flex: 0 0 auto; }
+.editor-cell.word-wrap-enabled .outline-row.is-collapsed .outline-line { flex-shrink: 1; }
+.fold-summary {
+    align-self: flex-start;
+    flex: none;
+    margin-right: 12px;
+    line-height: var(--editor-lh);
+    font-size: .8em;
+    color: var(--editor-text);
+    opacity: .7;
+    white-space: nowrap;
+    user-select: none;
+    pointer-events: none;
+}
+
+.outline-row.row-selected,
+.outline-row.drag-source {
+    background: var(--line-selection-bg);
+    border-left: 0;
+}
+.outline-row.row-selected .outline-gutter,
+.outline-row.drag-source .outline-gutter { color: var(--editor-text); }
+.outline-row.row-selected::after,
+.outline-row.drag-source::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 0;
+    border-left: 4px solid var(--line-selection-border);
+    pointer-events: none;
+    z-index: 2;
+}
+.outline-row.drop-before::before,
+.outline-row.drop-after::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--line-selection-border);
+    pointer-events: none;
+    z-index: 4;
+}
+.outline-row.drop-before::before { top: 0; }
+.outline-row.drop-after::before { bottom: 0; }

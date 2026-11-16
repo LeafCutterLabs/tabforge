@@ -73,6 +73,8 @@
         const statsCache = new Map();
         const searchLineIndexes = new WeakMap();
         const domRefs = {};
+        const editorViews = new Map();
+        const sparseSelectionCache = new WeakMap();
         let suppressHistory = false;
         let saveTimer = null;
         let saveMaxTimer = null;
@@ -506,23 +508,27 @@
             return null;
         }
 
-        function getSelectedLineRange(tabId) {
+        function getLineSelectionState(tabId) {
             if (state.selectedLineSet && state.selectedLineSet.tabId === tabId && state.selectedLineSet.indices.length) {
-                const sorted = [...state.selectedLineSet.indices].sort((a, b) => a - b);
-                return {
+                const sorted = state.selectedLineSet.indices;
+                const cached = sparseSelectionCache.get(sorted);
+                if (cached) return cached;
+                const selection = {
                     start: sorted[0],
                     end: sorted[sorted.length - 1],
                     indices: sorted,
+                    indexSet: new Set(sorted),
                     isMultiLine: sorted.length > 1,
                     hasSelection: true,
                     isSparse: sorted.length > 1 && !sorted.every((index, idx) => idx === 0 || index === sorted[idx - 1] + 1)
                 };
+                sparseSelectionCache.set(sorted, selection);
+                return selection;
             }
             if (state.selectedLineRange && state.selectedLineRange.tabId === tabId) {
                 return {
                     start: state.selectedLineRange.start,
                     end: state.selectedLineRange.end,
-                    indices: Array.from({ length: state.selectedLineRange.end - state.selectedLineRange.start + 1 }, (_, offset) => state.selectedLineRange.start + offset),
                     isMultiLine: state.selectedLineRange.start !== state.selectedLineRange.end,
                     hasSelection: true,
                     isSparse: false
@@ -544,10 +550,18 @@
             return {
                 start: Math.min(start, end),
                 end: Math.max(start, end),
-                indices: Array.from({ length: Math.abs(end - start) + 1 }, (_, offset) => Math.min(start, end) + offset),
                 isMultiLine: start !== end,
                 hasSelection: !selection.isCollapsed,
                 isSparse: false
+            };
+        }
+
+        function getSelectedLineRange(tabId) {
+            const selection = getLineSelectionState(tabId);
+            if (!selection) return null;
+            return {
+                ...selection,
+                indices: selection.indices || Array.from({ length: selection.end - selection.start + 1 }, (_, offset) => selection.start + offset)
             };
         }
 
@@ -557,8 +571,55 @@
         }
 
         function isLineIndexSelected(tabId, lineIndex) {
-            const range = getSelectedLineRange(tabId);
-            return Boolean(range?.hasSelection && range.indices.includes(lineIndex));
+            return isIndexInLineSelection(getLineSelectionState(tabId), lineIndex);
+        }
+
+        function isIndexInLineSelection(selection, index) {
+            if (!selection?.hasSelection) return false;
+            return selection.isSparse ? selection.indexSet.has(index) : index >= selection.start && index <= selection.end;
+        }
+
+        function syncLineSelectionUI(tabId) {
+            const view = editorViews.get(tabId);
+            if (!view) return;
+            const selection = getLineSelectionState(tabId);
+            view.rows.forEach((row, index) => row.classList.toggle('row-selected', isIndexInLineSelection(selection, index)));
+        }
+
+        function syncLineDragTargetUI(tabId) {
+            const view = editorViews.get(tabId);
+            if (!view) return;
+            view.dropRow?.classList.remove('drop-before', 'drop-after');
+            const drag = state.dragMove?.tabId === tabId ? state.dragMove : null;
+            view.dropRow = drag ? view.rows.get(drag.hoverIndex) : null;
+            view.dropRow?.classList.add(drag.position === 'before' ? 'drop-before' : 'drop-after');
+        }
+
+        function syncLineDragUI(tabId) {
+            const view = editorViews.get(tabId);
+            if (!view) return;
+            const drag = state.dragMove?.tabId === tabId ? state.dragMove : null;
+            view.rows.forEach((row, index) => row.classList.toggle('drag-source', Boolean(drag && index >= drag.start && index <= drag.end)));
+            if (drag) {
+                if (!view.dragBadge) {
+                    view.dragBadge = document.createElement('div');
+                    view.dragBadge.className = 'drag-status';
+                    view.dragBadge.setAttribute('role', 'status');
+                    view.shell.appendChild(view.dragBadge);
+                }
+                const count = drag.end - drag.start + 1;
+                view.dragBadge.textContent = `Moving ${count} line${count === 1 ? '' : 's'}`;
+            } else {
+                view.dragBadge?.remove();
+                view.dragBadge = null;
+            }
+            syncLineDragTargetUI(tabId);
+        }
+
+        function cancelLineDragMove() {
+            const tabId = state.dragMove?.tabId || state.pendingLineDrag?.tabId;
+            state.dragMove = state.pendingLineDrag = null;
+            if (tabId) syncLineDragUI(tabId);
         }
 
         function setSelectedLineIndices(tabId, indices) {
@@ -636,7 +697,7 @@
                 ? { tabId, lineIndex, startX: e.clientX, startY: e.clientY }
                 : null;
             window.getSelection()?.removeAllRanges();
-            requestRender('editor', { immediate: true });
+            syncLineSelectionUI(tabId);
             focusLineSelection(tabId);
         }
 
@@ -645,8 +706,7 @@
             if (state.dragMove || state.pendingLineDrag) {
                 if (e.key !== 'Escape') return;
                 e.preventDefault();
-                state.dragMove = state.pendingLineDrag = null;
-                requestRender('editor', { immediate: true });
+                cancelLineDragMove();
                 return;
             }
             const tab = getTabById(tabId);
@@ -661,14 +721,13 @@
                 const target = visible[nextIndex].index;
                 if (e.shiftKey) extendLineSelectionTo(tabId, target);
                 else setSingleLineSelection(tabId, target);
-                requestRender('editor', { immediate: true });
+                syncLineSelectionUI(tabId);
                 focusLineSelection(tabId, target);
             } else if (e.key === 'Enter' || e.key === 'F2' || e.key === 'Escape') {
                 e.preventDefault();
                 const { visible } = getVisibleLineState(tab);
                 const index = visible.findLast(node => node.index <= state.activeLineIndex)?.index ?? visible[0]?.index;
                 clearSelectedLineSelection();
-                requestRender('editor', { immediate: true });
                 const line = getLineEditor(tabId, index);
                 line?.focus({ preventScroll: true });
                 if (line) placeCaret(line, 0);
@@ -906,9 +965,8 @@
             };
         }
 
-        function applyRowHighlight(row, rawLine, extraFlags = []) {
+        function applyRowHighlight(row, rawLine, flags = getAttentionFlags(rawLine)) {
             if (!row) return;
-            const flags = [...getAttentionFlags(rawLine), ...extraFlags];
             const highlight = buildRowHighlight(flags);
             row.classList.remove('attention-question', 'attention-urgent');
             row.classList.toggle('has-row-highlight', Boolean(highlight));
@@ -1563,8 +1621,7 @@
                     raw: lines[i],
                     depth,
                     text: getDisplayText(lines[i]),
-                    attentionFlags,
-                    rowHighlight: buildRowHighlight(attentionFlags)
+                    attentionFlags
                 });
 
                 if (isCollapsed) hiddenDepth = depth;
@@ -1659,6 +1716,50 @@
             });
         }
 
+        // Surviving lines keep their folds by position, even when text is duplicated.
+        // preserveAt identifies the replacement line that inherits a split/merge's fold.
+        function spliceLineBlockWithState(lines, collapsedLines, edit) {
+            if (edit.indices) {
+                const removed = new Set(edit.indices);
+                const collapsed = new Set(collapsedLines);
+                const nextLines = [];
+                const nextCollapsed = [];
+                for (let index = 0; index < lines.length; index++) {
+                    if (index === edit.indices[0]) nextLines.push(...(edit.inserted || []));
+                    if (removed.has(index)) continue;
+                    if (collapsed.has(index)) nextCollapsed.push(nextLines.length);
+                    nextLines.push(lines[index]);
+                }
+                return { lines: nextLines, collapsedLines: nextCollapsed };
+            }
+            const { start, deleteCount, inserted = [], preserveAt = null } = edit;
+            const nextLines = [...lines];
+            nextLines.splice(start, deleteCount, ...inserted);
+            const delta = inserted.length - deleteCount;
+            const nextCollapsed = collapsedLines.flatMap(index => {
+                if (index < start) return [index];
+                if (index >= start + deleteCount) return [index + delta];
+                if (preserveAt !== null && preserveAt < inserted.length
+                    && (index === start || inserted.length === 1)) return [start + preserveAt];
+                return [];
+            });
+            return { lines: nextLines, collapsedLines: [...new Set(nextCollapsed)].sort((a, b) => a - b) };
+        }
+
+        function applyTabLineEdits(tabId, edits, focusLineIndex, caretOffset = 0, options = {}) {
+            const tab = getTabById(tabId);
+            if (!tab) return;
+            let result = { lines: getTabLines(tab), collapsedLines: tab.collapsedLines || [] };
+            for (const edit of edits) result = spliceLineBlockWithState(result.lines, result.collapsedLines, edit);
+            if (!result.lines.length) result.lines = [''];
+            const contentChanged = result.lines.join('\n') !== tab.content;
+            const foldsChanged = JSON.stringify(result.collapsedLines) !== JSON.stringify(tab.collapsedLines || []);
+            if (contentChanged || foldsChanged) recordTabHistory(tabId);
+            tab.collapsedLines = result.collapsedLines;
+            clearSelectedLineSelection();
+            updateTabLines(tabId, result.lines, focusLineIndex, caretOffset, { ...options, historyRecorded: true });
+        }
+
         function setSelectedLineRange(tabId, start, end) {
             state.selectedLineSet = null;
             state.selectedLineRange = {
@@ -1668,10 +1769,6 @@
             };
             state.selectedLineAnchor = { tabId, index: start };
             state.activeLineIndex = end;
-        }
-
-        function clearSelectedLineRange() {
-            state.selectedLineRange = null;
         }
 
         function endDragSelection() {
@@ -1704,7 +1801,7 @@
                 if (state.dragMove.targetIndex !== null) {
                     state.dragMove.targetIndex = null;
                     state.dragMove.hoverIndex = null;
-                    requestRender('editor', { immediate: true });
+                    syncLineDragTargetUI(state.dragMove.tabId);
                 }
                 return;
             }
@@ -1740,9 +1837,10 @@
                 return { lines, collapsedLines, movedStart: start };
             }
 
+            const collapsedSet = new Set(collapsedLines);
             const entries = lines.map((text, index) => ({
                 text,
-                collapsed: collapsedLines.includes(index)
+                collapsed: collapsedSet.has(index)
             }));
             const moved = entries.slice(start, end + 1);
             const remaining = entries.slice(0, start).concat(entries.slice(end + 1));
@@ -1767,7 +1865,7 @@
                 hoverIndex: null,
                 position: 'after'
             };
-            requestRender('editor', { immediate: true });
+            syncLineDragUI(tabId);
         }
 
         function updateLineDragMoveTarget(tabId, hoverIndex, position) {
@@ -1781,7 +1879,7 @@
             state.dragMove.hoverIndex = hoverIndex;
             state.dragMove.position = position;
             state.dragMove.targetIndex = position === 'before' ? hoverIndex : afterIndex;
-            requestRender('editor', { immediate: true });
+            syncLineDragTargetUI(tabId);
         }
 
         function finishLineDragMove() {
@@ -1789,9 +1887,9 @@
             const { tabId, start, end, targetIndex } = state.dragMove;
             const tab = getTabById(tabId);
             state.dragMove = null;
+            syncLineDragUI(tabId);
             if (!tab) return;
             if (targetIndex === null) {
-                requestRender('editor', { immediate: true });
                 return;
             }
 
@@ -1799,7 +1897,6 @@
             const currentCollapsed = [...(tab.collapsedLines || [])];
             const moved = moveLineBlockWithState(currentLines, currentCollapsed, start, end, targetIndex);
             if (moved.lines === currentLines) {
-                requestRender('editor', { immediate: true });
                 return;
             }
 
@@ -1829,6 +1926,16 @@
             return shouldNormalize ? normalizeOutlineLines(nextLines, []) : nextLines;
         }
 
+        function getLineIndexSegments(indices) {
+            const segments = [];
+            for (const index of indices) {
+                const last = segments[segments.length - 1];
+                if (last && index === last[1] + 1) last[1] = index;
+                else segments.push([index, index]);
+            }
+            return segments;
+        }
+
         function handleSelectedRangeTab(e) {
             if (e.key !== 'Tab') return;
             const tab = getSelectedRangeTab(e);
@@ -1838,17 +1945,7 @@
             const indices = getSelectedLineIndices(tab.id);
             if (!indices.length) return;
             let nextLines = [...currentLines];
-            const segments = [];
-            let segmentStart = indices[0];
-            let previous = indices[0];
-            for (let i = 1; i < indices.length; i++) {
-                if (indices[i] !== previous + 1) {
-                    segments.push([segmentStart, previous]);
-                    segmentStart = indices[i];
-                }
-                previous = indices[i];
-            }
-            segments.push([segmentStart, previous]);
+            const segments = getLineIndexSegments(indices);
             [...segments].reverse().forEach(([start, end]) => {
                 nextLines = tab.outlineModeActive && !state.tempOutlineDisabled
                     ? shiftOutlineRange(nextLines, start, end, e.shiftKey ? -1 : 1, true)
@@ -1965,13 +2062,8 @@
             const indices = getSelectedLineIndices(tab.id);
             if (!indices.length) return;
             const firstIndex = indices[0];
-            const indexSet = new Set(indices);
-            const remainingLines = currentLines.filter((_, index) => !indexSet.has(index));
-            const nextLines = remainingLines.length ? remainingLines : [''];
-            const focusLine = Math.max(0, Math.min(firstIndex, nextLines.length - 1));
-            if (nextLines.join('\n') !== tab.content) recordTabHistory(tab.id);
-            clearSelectedLineSelection();
-            updateTabLines(tab.id, nextLines, focusLine, 0, { historyRecorded: true });
+            const focusLine = Math.max(0, Math.min(firstIndex, currentLines.length - indices.length - 1));
+            applyTabLineEdits(tab.id, [{ indices }], focusLine);
         }
 
         function handleSelectedRangeCopy(e) {
@@ -1999,17 +2091,11 @@
             const pasted = normalizeClipboardText(e.clipboardData.getData('text/plain'));
             if (!pasted) return;
             e.preventDefault();
-            const currentLines = getTabLines(tab);
             const indices = getSelectedLineIndices(tab.id);
             if (!indices.length) return;
             const start = indices[0];
-            const indexSet = new Set(indices);
             const incomingLines = pasted.split('\n');
-            const nextLines = currentLines.filter((_, index) => !indexSet.has(index));
-            nextLines.splice(start, 0, ...incomingLines);
-            if (nextLines.join('\n') !== tab.content) recordTabHistory(tab.id);
-            clearSelectedLineSelection();
-            updateTabLines(tab.id, nextLines, start + incomingLines.length - 1, incomingLines[incomingLines.length - 1].length, { historyRecorded: true });
+            applyTabLineEdits(tab.id, [{ indices, inserted: incomingLines }], start + incomingLines.length - 1, incomingLines[incomingLines.length - 1].length);
         }
 
         function updateHoveredLineDragReady(isShiftHeld) {
@@ -2059,7 +2145,7 @@
                 const mvStatusClass = isDirty ? 'mv-dirty' : 'mv-saved';
                 const el = document.createElement('div');
                 el.draggable = true;
-                el.className = "group flex items-center h-8 px-3 mr-0.5 cursor-pointer text-xs select-none tab-btn " + (active ? 'tab-active shadow-sm' : 'tab-inactive');
+                el.className = "group flex items-center h-8 px-3 mr-0.5 cursor-pointer text-xs select-none tab-btn " + (active ? 'tab-active' : 'tab-inactive');
                 
                 if (state.theme.orientation === 'horizontal') el.classList.add('min-w-[120px]');
                 
@@ -2311,25 +2397,23 @@
             const hasFoldableLines = structure.descendantCounts.some(count => count > 0);
             const collapsed = getCollapsedLineSet(tab);
             const savedLines = getManualSavedLines(tab);
+            const selection = getLineSelectionState(tab.id);
+            const view = { shell, rows: new Map(), dropRow: null, dragBadge: null };
+            editorViews.set(tab.id, view);
 
             visible.forEach((node, visibleIndex) => {
                 const row = document.createElement('div');
                 row.className = "outline-row";
+                const hiddenLineCount = collapsed.has(node.index) ? structure.descendantCounts[node.index] : 0;
+                if (hiddenLineCount) row.classList.add('is-collapsed');
                 if (tab.showZebra && node.index % 2 === 1) row.classList.add('zebra-row-alt');
                 row.dataset.rowIndex = String(node.index);
                 row.dataset.tabId = tab.id;
-                const isRowSelected = isLineIndexSelected(tab.id, node.index);
+                view.rows.set(node.index, row);
+                const isRowSelected = isIndexInLineSelection(selection, node.index);
                 if (isRowSelected) row.classList.add('row-selected');
-                if (state.dragMove && state.dragMove.tabId === tab.id && node.index >= state.dragMove.start && node.index <= state.dragMove.end) {
-                    row.classList.add('drag-source');
-                }
-                applyRowHighlight(row, node.raw, [
-                    ...node.attentionFlags
-                ]);
+                applyRowHighlight(row, node.raw, node.attentionFlags);
                 if ((lines[node.index] || '') !== (savedLines[node.index] || '')) row.classList.add('revision-changed');
-                if (state.dragMove && state.dragMove.tabId === tab.id && state.dragMove.hoverIndex === node.index) {
-                    row.classList.add(state.dragMove.position === 'before' ? 'drop-before' : 'drop-after');
-                }
 
                 if (tab.showLineNumbers || hasFoldableLines) {
                     const gutter = document.createElement('div');
@@ -2342,7 +2426,9 @@
                         fold.dataset.foldLine = String(node.index);
                         const expanded = !collapsed.has(node.index);
                         fold.setAttribute('aria-expanded', String(expanded));
-                        fold.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} descendants of line ${node.index + 1}`);
+                        fold.setAttribute('aria-label', expanded
+                            ? `Collapse descendants of line ${node.index + 1}`
+                            : `Expand ${hiddenLineCount} hidden line${hiddenLineCount === 1 ? '' : 's'} under line ${node.index + 1}`);
                         fold.title = fold.getAttribute('aria-label');
                         fold.onmousedown = (e) => e.stopPropagation();
                         fold.onclick = (e) => {
@@ -2432,6 +2518,7 @@
                     const rowIsSelected = isLineIndexSelected(tab.id, node.index);
                     if (e.shiftKey && (line.classList.contains('drag-ready') || rowIsSelected)) {
                         e.stopPropagation();
+                        e.preventDefault();
                         state.activeTabId = tab.id;
                         state.activeLineIndex = node.index;
                         state.pendingLineDrag = { tabId: tab.id, lineIndex: node.index, startX: e.clientX, startY: e.clientY };
@@ -2467,7 +2554,7 @@
                     if (!state.dragSelecting.moved && state.dragSelecting.anchor === node.index) return;
                     state.dragSelecting.moved = true;
                     setSelectedLineRange(tab.id, state.dragSelecting.anchor, node.index);
-                    requestRender('editor', { immediate: true });
+                    syncLineSelectionUI(tab.id);
                 };
 
                 line.oninput = (e) => {
@@ -2508,8 +2595,11 @@
                     nextLines[node.index] = "\t".repeat(node.depth) + left + incomingLines[0];
                     const middleLines = incomingLines.slice(1, -1).map(text => "\t".repeat(node.depth) + text);
                     const lastLine = "\t".repeat(node.depth) + incomingLines[incomingLines.length - 1] + right;
-                    nextLines.splice(node.index + 1, 0, ...middleLines, lastLine);
-                    updateTabLines(tab.id, nextLines, node.index + incomingLines.length - 1, incomingLines[incomingLines.length - 1].length);
+                    applyTabLineEdits(tab.id, [{
+                        start: node.index, deleteCount: 1,
+                        inserted: [nextLines[node.index], ...middleLines, lastLine],
+                        preserveAt: caretOffset === 0 ? incomingLines.length - 1 : 0
+                    }], node.index + incomingLines.length - 1, incomingLines[incomingLines.length - 1].length);
                 };
 
                 line.onkeydown = (e) => {
@@ -2525,17 +2615,7 @@
                         if (selectedRange && (selectedRange.isMultiLine || (selectedRange.hasSelection && tab.outlineModeActive && !state.tempOutlineDisabled))) {
                             const indices = selectedRange.indices || getSelectedLineIndices(tab.id);
                             let nextLines = [...currentLines];
-                            const segments = [];
-                            let segmentStart = indices[0];
-                            let previous = indices[0];
-                            for (let i = 1; i < indices.length; i++) {
-                                if (indices[i] !== previous + 1) {
-                                    segments.push([segmentStart, previous]);
-                                    segmentStart = indices[i];
-                                }
-                                previous = indices[i];
-                            }
-                            segments.push([segmentStart, previous]);
+                            const segments = getLineIndexSegments(indices);
                             [...segments].reverse().forEach(([start, end]) => {
                                 nextLines = tab.outlineModeActive && !state.tempOutlineDisabled
                                     ? shiftOutlineRange(nextLines, start, end, e.shiftKey ? -1 : 1, true)
@@ -2595,14 +2675,15 @@
                         if (node.index === 0 && !tab.manuallyRenamed) {
                             lockTabTitleFromFirstLine(tab, left);
                         }
-                        const nextLines = [...currentLines];
                         const currentLineIsBlank = !currentText.trim();
                         const currentLineIsEnumerated = Boolean(getSymbolInfo(currentLines[node.index])) && !currentLineIsBlank;
                         const shouldContinueOutline = tab.outlineModeActive && !state.tempOutlineDisabled && currentLineIsEnumerated;
                         const nextInsertMarker = shouldContinueOutline ? marker : '';
-                        nextLines[node.index] = "\t".repeat(node.depth) + left;
-                        nextLines.splice(node.index + 1, 0, "\t".repeat(nextLineDepth) + nextInsertMarker + right);
-                        updateTabLines(tab.id, nextLines, node.index + 1, nextInsertMarker.length);
+                        applyTabLineEdits(tab.id, [{
+                            start: node.index, deleteCount: 1,
+                            inserted: ["\t".repeat(node.depth) + left, "\t".repeat(nextLineDepth) + nextInsertMarker + right],
+                            preserveAt: caretOffset === 0 ? 1 : 0
+                        }], node.index + 1, nextInsertMarker.length);
                         return;
                     }
 
@@ -2617,7 +2698,7 @@
                                     state.selectedLineAnchor = { tabId: tab.id, index: node.index };
                                 }
                                 extendLineSelectionTo(tab.id, target.index);
-                                requestRender('editor', { immediate: true });
+                                syncLineSelectionUI(tab.id);
                                 focusLineSelection(tab.id, target.index);
                                 return;
                             } else {
@@ -2648,21 +2729,19 @@
                         }
                         if (!currentText.length && currentLines.length > 1) {
                             e.preventDefault();
-                            const nextLines = [...currentLines];
-                            nextLines.splice(node.index, 1);
-                            updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
+                            applyTabLineEdits(tab.id, [{ start: node.index, deleteCount: 1 }],
+                                Math.max(0, node.index - 1), getLineTextLength(currentLines, Math.max(0, node.index - 1)));
                             return;
                         }
                         if (node.index > 0 && currentLines.length > 1) {
                             e.preventDefault();
-                            const nextLines = [...currentLines];
-                            const previousRaw = nextLines[node.index - 1] || '';
+                            const previousRaw = currentLines[node.index - 1] || '';
                             const previousPrefix = previousRaw.match(/^\t*/)?.[0] || '';
                             const previousText = getDisplayText(previousRaw);
                             const mergedText = previousText + currentText;
-                            nextLines[node.index - 1] = previousPrefix + mergedText;
-                            nextLines.splice(node.index, 1);
-                            updateTabLines(tab.id, nextLines, node.index - 1, previousText.length);
+                            applyTabLineEdits(tab.id, [{
+                                start: node.index - 1, deleteCount: 2, inserted: [previousPrefix + mergedText], preserveAt: 0
+                            }], node.index - 1, previousText.length);
                             return;
                         }
                     }
@@ -2670,47 +2749,45 @@
                     if (e.key === 'Delete' && caretOffset === currentText.length && node.index < currentLines.length - 1) {
                         if (!currentText.length && currentLines.length > 1) {
                             e.preventDefault();
-                            const nextLines = [...currentLines];
-                            nextLines.splice(node.index, 1);
-                            updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
+                            applyTabLineEdits(tab.id, [{ start: node.index, deleteCount: 1 }],
+                                Math.max(0, node.index - 1), getLineTextLength(currentLines, Math.max(0, node.index - 1)));
                             return;
                         }
                         e.preventDefault();
-                        const nextLines = [...currentLines];
-                        const currentRaw = nextLines[node.index];
-                        const nextRaw = nextLines[node.index + 1];
+                        const currentRaw = currentLines[node.index];
+                        const nextRaw = currentLines[node.index + 1];
                         const currentPrefix = currentRaw.match(/^\t*/)?.[0] || '';
                         const mergedText = getDisplayText(currentRaw) + getDisplayText(nextRaw);
-                        nextLines[node.index] = currentPrefix + mergedText;
-                        nextLines.splice(node.index + 1, 1);
-                        updateTabLines(tab.id, nextLines, node.index, currentText.length);
+                        applyTabLineEdits(tab.id, [{
+                            start: node.index, deleteCount: 2, inserted: [currentPrefix + mergedText], preserveAt: 0
+                        }], node.index, currentText.length);
                         return;
                     }
 
                     if (e.key === 'Delete' && !currentText.length && currentLines.length > 1) {
                         e.preventDefault();
-                        const nextLines = [...currentLines];
-                        nextLines.splice(node.index, 1);
-                        updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
+                        applyTabLineEdits(tab.id, [{ start: node.index, deleteCount: 1 }],
+                            Math.max(0, node.index - 1), getLineTextLength(currentLines, Math.max(0, node.index - 1)));
                         return;
                     }
 
-                    if (e.key === 'Backspace' && !currentText.length && caretOffset === 0 && currentLines.length > 1) {
-                        e.preventDefault();
-                        const nextLines = [...currentLines];
-                        nextLines.splice(node.index, 1);
-                        updateTabLines(tab.id, nextLines, Math.max(0, node.index - 1), getLineTextLength(nextLines, Math.max(0, node.index - 1)));
-                        return;
-                    }
                 };
 
                 row.appendChild(line);
+                if (hiddenLineCount) {
+                    const summary = document.createElement('span');
+                    summary.className = 'fold-summary';
+                    summary.textContent = `${hiddenLineCount} hidden line${hiddenLineCount === 1 ? '' : 's'}`;
+                    summary.setAttribute('aria-hidden', 'true');
+                    row.appendChild(summary);
+                }
                 root.appendChild(row);
             });
 
             wrap.appendChild(root);
             shell.appendChild(wrap);
             buildMarkerRail(tab, shell);
+            syncLineDragUI(tab.id);
             return shell;
         }
 
@@ -2727,6 +2804,7 @@
                     { top: cell.scrollTop, left: cell.scrollLeft }
                 ])
             );
+            editorViews.clear();
             container.innerHTML = '';
             if (state.multiViewIds.length > 1) {
                 const grid = document.createElement('div');
@@ -2763,13 +2841,6 @@
                     const fold = container.querySelector(`.editor-cell[data-editor-tab="${focusedTabId}"] [data-fold-line="${focusedFoldIndex}"]`);
                     fold?.focus({ preventScroll: true });
                 }
-            }
-            if (state.dragMove) {
-                const badge = document.createElement('div');
-                const movedCount = state.dragMove.end - state.dragMove.start + 1;
-                badge.className = 'drag-status';
-                badge.textContent = `Moving ${movedCount} line${movedCount === 1 ? '' : 's'}`;
-                container.appendChild(badge);
             }
         }
 
@@ -3551,8 +3622,7 @@
                     closeApplicationMenus();
                     if (state.dragMove || state.pendingLineDrag) {
                         event.preventDefault();
-                        state.dragMove = state.pendingLineDrag = null;
-                        requestRender('editor', { immediate: true });
+                        cancelLineDragMove();
                     }
                 }
             });
