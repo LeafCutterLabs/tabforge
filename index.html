@@ -11,115 +11,189 @@
     <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
-    <header id="app-header" class="shrink-0">
-        <div class="brand-lockup" aria-label="tabFORGE">
-            <span class="brand-tab">tab</span><span class="brand-forge">FORGE</span>
-        </div>
 
-        <nav class="app-menus" aria-label="Application menus">
-            <details class="app-menu">
-                <summary>File <i data-lucide="chevron-down"></i></summary>
-                <div class="menu-popover">
-                    <button id="import-btn" class="menu-item"><i data-lucide="file-up"></i><span>Import text files</span></button>
-                    <button id="export-tab-btn" class="menu-item"><i data-lucide="file-down"></i><span>Export current tab</span></button>
-                    <button id="export-all-btn" class="menu-item"><i data-lucide="archive"></i><span>Export all tabs</span></button>
-                    <div class="menu-separator"></div>
-                    <button id="manual-save-all-btn" class="menu-item"><i data-lucide="save-all"></i><span>Save all</span></button>
-                    <button id="restore-save-btn" class="menu-item"><i data-lucide="history"></i><span>Restore last save</span></button>
-                    <button id="print-btn" class="menu-item"><i data-lucide="printer"></i><span>Print</span></button>
-                </div>
-            </details>
-            <details class="app-menu">
-                <summary>Edit <i data-lucide="chevron-down"></i></summary>
-                <div class="menu-popover">
-                    <button class="menu-item menu-proxy" data-proxy="undo-btn"><i data-lucide="undo-2"></i><span>Undo</span><kbd>Ctrl Z</kbd></button>
-                    <button class="menu-item menu-proxy" data-proxy="redo-btn"><i data-lucide="redo-2"></i><span>Redo</span><kbd>Ctrl Y</kbd></button>
-                    <button class="menu-item menu-proxy" data-proxy="open-find-btn"><i data-lucide="search"></i><span>Find and replace</span><kbd>Ctrl F</kbd></button>
-                </div>
-            </details>
-            <details class="app-menu">
-                <summary>View <i data-lucide="chevron-down"></i></summary>
-                <div class="menu-popover">
-                    <button id="toggle-line-numbers" class="menu-item"><i data-lucide="list-ordered"></i><span>Line numbers</span></button>
-                    <button id="toggle-zebra" class="menu-item"><i data-lucide="rows-3"></i><span>Zebra rows</span></button>
-                    <button id="zoom-out-btn" class="menu-item"><i data-lucide="zoom-out"></i><span>Zoom out</span></button>
-                    <button id="zoom-in-btn" class="menu-item"><i data-lucide="zoom-in"></i><span>Zoom in</span></button>
-                </div>
-            </details>
-        </nav>
-
-        <div class="header-actions">
-            <button id="open-find-btn" class="search-launch" title="Find (Ctrl+F)">
-                <i data-lucide="search"></i><span>Find (Ctrl+F)</span><i data-lucide="chevron-down" class="search-chevron"></i>
-            </button>
-            <button id="open-settings-btn" class="settings-button" title="Settings">
-                <i data-lucide="settings"></i><span>Settings</span><i data-lucide="chevron-down"></i>
-            </button>
-        </div>
-
-        <div id="find-bar" class="hidden search-panel">
-            <div class="search-field"><i data-lucide="search"></i><input id="find-input" type="text" placeholder="Find in current tab"></div>
-            <div class="search-field"><i data-lucide="replace"></i><input id="replace-input" type="text" placeholder="Replace with"></div>
-            <button id="find-next-btn" class="search-action" title="Find Next"><i data-lucide="arrow-down"></i></button>
-            <button id="replace-btn" class="search-action" title="Replace Current"><i data-lucide="replace"></i></button>
-            <button id="replace-all-btn" class="search-action" title="Replace All"><i data-lucide="replace-all"></i></button>
-            <label class="fuzzy-toggle"><input id="find-fuzzy-toggle" type="checkbox"><span>Fuzzy</span></label>
-            <div id="find-meta"><span id="find-count">0 matches</span><span aria-hidden="true"> · </span><span id="find-other-tabs">0 other</span></div>
-        </div>
-        <input type="file" id="file-input" class="hidden" multiple accept=".txt">
-    </header>
-
-    <div id="app-body" class="flex flex-1 overflow-hidden flex-col tabs-horizontal">
-        <div id="tab-strip">
-            <nav id="tabs-container" class="flex shrink-0 overflow-auto no-scrollbar" aria-label="Open documents"></nav>
-            <button id="add-tab-btn" class="add-tab-button" title="New file" aria-label="New file"><i data-lucide="plus"></i></button>
-        </div>
-
-        <div id="editor-workspace">
-            <div id="toolbar-buttons" role="toolbar" aria-label="Editor controls">
-                <div class="save-split">
-                    <button id="manual-save-btn" class="toolbar-button toolbar-primary" title="Save"><i data-lucide="save"></i><span>Save</span></button>
-                    <button class="toolbar-primary save-menu-proxy" data-proxy="manual-save-all-btn" title="Save all"><i data-lucide="chevron-down"></i></button>
-                </div>
-                <span class="toolbar-separator"></span>
-                <button id="undo-btn" class="toolbar-button" title="Undo"><i data-lucide="undo-2"></i><span>Undo</span></button>
-                <button id="redo-btn" class="toolbar-button" title="Redo"><i data-lucide="redo-2"></i><span>Redo</span></button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-outline-mode" class="toolbar-button toolbar-toggle" title="Toggle Magic Outline Mode">
-                    <i data-lucide="list-tree"></i><span>Magic outline</span><span class="switch-control" aria-hidden="true"></span>
-                </button>
-                <button id="outline-level-filter-btn" class="toolbar-button toolbar-select hidden" title="Cycle Outline Level Filter">
-                    <i data-lucide="list"></i><span id="outline-level-filter-label">All levels</span><i data-lucide="chevron-down"></i>
-                </button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-hide-completed" class="toolbar-button toolbar-toggle" title="Hide DONE Lines">
-                    <i data-lucide="eye-off"></i><span>Hide DONE</span><span class="switch-control" aria-hidden="true"></span>
-                </button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-word-wrap" class="toolbar-button toolbar-toggle" title="Word Wrap">
-                    <i data-lucide="text-wrap"></i><span>Wrap</span><span class="switch-control" aria-hidden="true"></span>
-                </button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-view-mode" class="toolbar-button toolbar-select" title="Cycle View Layout">
-                    <svg id="view-mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
-                    <span id="view-mode-label">Single view</span><i data-lucide="chevron-down"></i>
+    <header class="h-12 flex items-center justify-between px-3 shrink-0">
+        <div class="flex items-center space-x-1">
+            <div class="flex items-center space-x-2 text-accent mr-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">
+                    <path d="M9 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 23 8v12a2 2 0 0 1-2 2z"/>
+                    <path d="M17 2v5a1 1 0 0 0 1 1h5"/>
+                    <path d="M13 9H11"/>
+                    <path d="M19 13H11"/>
+                    <path d="M19 17H11"/>
+                    <path d="M7 10H6a4 4 0 0 1-4-4 1 1 0 0 1 1-1h4"/>
+                </svg>
+                <span class="text-xs font-black uppercase tracking-tighter hidden sm:inline">tabForge</span>
+            </div>
+            <!-- FILE ACTIONS -->
+            <div class="flex items-center space-x-0.5">
+                <!-- NEW FILE ICON -->
+                <button id="add-tab-btn" class="stable-btn hover:bg-white/10" title="New File"><i data-lucide="plus-square" class="w-[18px] h-[18px]"></i></button>
+                <!-- IMPORT ICON -->
+                <button id="import-btn" class="stable-btn hover:bg-white/10" title="Import Text Files">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M7 4h8l4 4v12H7z"/>
+                        <path d="M15 4v4h4"/>
+                        <path d="M4 8L11 15"/>
+                        <path d="M11 8V15H4"/>
+                    </svg>
                 </button>
             </div>
-            <main id="editor-container" class="flex-1 relative overflow-hidden"></main>
+
+            <input type="file" id="file-input" class="hidden" multiple accept=".txt">
+
+            <div class="h-4 w-px bg-white/20 mx-1"></div>
+
+            <div class="flex items-center space-x-0.5">
+                <!-- EXPORT CURRENT ICON -->
+                <button id="export-tab-btn" class="stable-btn hover:bg-white/10" title="Export Current Tab">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M7 4h8l4 4v12H7z"/>
+                        <path d="M15 4v4h4"/>
+                        <path d="M4 8L11 15"/>
+                        <path d="M4 15V8H11"/>
+                    </svg>
+                </button>
+                <!-- EXPORT ALL ICON -->
+                <button id="export-all-btn" class="stable-btn hover:bg-white/10" title="Export All Tabs">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M7 4h8l4 4v12H7z"/>
+                        <path d="M15 4v4h4M4 8l7 7m-7 0V8h7M9 23h13V8"/>
+                    </svg>
+                </button>
+                <!-- PRINT ICON -->
+                <button id="print-btn" class="stable-btn hover:bg-white/10" title="Print Current Tab"><i data-lucide="printer" class="w-[18px] h-[18px]"></i></button>
+            </div>
+
+            <div class="h-4 w-px bg-white/20 mx-1"></div>
+
+            <div class="flex items-center space-x-1" id="toolbar-buttons">
+                <!-- SAVE ICON -->
+                <button id="manual-save-btn" class="stable-btn hover:bg-white/10" title="Save">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 4h12l2 2v14H5z"/>
+                        <path d="M8 4v5h8V4"/>
+                        <path d="M8 20v-6h8v6"/>
+                    </svg>
+                </button>
+                <!-- SAVE ALL ICON -->
+                <button id="manual-save-all-btn" class="stable-btn hover:bg-white/10" title="Save All">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 4h12l2 2v14H5z"/>
+                        <path d="M8 4v5h8V4M8 20v-6h8v6"/>
+                        <path d="M7 23h15V9"/>
+                    </svg>
+                </button>
+                <!-- JUMP BACK ICON -->
+                <button id="restore-save-btn" class="stable-btn hover:bg-white/10" title="Jump Back To Last Save"><i data-lucide="rotate-ccw" class="w-[18px] h-[18px]"></i></button>
+                <!-- UNDO ICON -->
+                <button id="undo-btn" class="stable-btn hover:bg-white/10" title="Undo"><i data-lucide="undo-2" class="w-[18px] h-[18px]"></i></button>
+                <!-- REDO ICON -->
+                <button id="redo-btn" class="stable-btn hover:bg-white/10" title="Redo"><i data-lucide="redo-2" class="w-[18px] h-[18px]"></i></button>
+                <div class="h-4 w-px bg-white/20 mx-1"></div>
+                <!-- LINE NUMBERS ICON -->
+                <button id="toggle-line-numbers" class="stable-btn transition-all" title="Line Numbers"><i data-lucide="list-ordered" class="w-[18px] h-[18px]"></i></button>
+                <!-- ZEBRA MODE ICON -->
+                <button id="toggle-zebra" class="stable-btn transition-all" title="Zebra Mode">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="5" y="4" width="14" height="4" rx="1"/>
+                        <rect x="5" y="10" width="14" height="4" rx="1" fill="currentColor" stroke="none"/>
+                        <rect x="5" y="16" width="14" height="4" rx="1"/>
+                    </svg>
+                </button>
+                <!-- ZOOM OUT ICON -->
+                <button id="zoom-out-btn" class="stable-btn transition-all" title="Zoom Out">
+                    <i data-lucide="zoom-out" class="w-[18px] h-[18px]"></i>
+                </button>
+                <!-- ZOOM IN ICON -->
+                <button id="zoom-in-btn" class="stable-btn transition-all" title="Zoom In">
+                    <i data-lucide="zoom-in" class="w-[18px] h-[18px]"></i>
+                </button>
+                <!-- WORD WRAP ICON -->
+                <button id="toggle-word-wrap" class="stable-btn transition-all" title="Word Wrap">
+                    <i data-lucide="text-wrap" class="w-[18px] h-[18px]"></i>
+                </button>
+                <!-- MAGIC OUTLINE ICON -->
+                <button id="toggle-outline-mode" class="stable-btn transition-all" title="Toggle Magic Outline Mode">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="4" cy="3" r=".5"/>
+                        <path d="M9 3h11"/>
+                        <circle cx="7" cy="9" r=".5"/>
+                        <path d="M12 9h8"/>
+                        <circle cx="10" cy="15" r=".5"/>
+                        <path d="M15 15h5"/>
+                        <circle cx="4" cy="21" r=".5"/>
+                        <path d="M9 21h11"/>
+                    </svg>
+                </button>
+                <!-- EXPAND TO LEVEL ICON -->
+                <button id="outline-level-filter-btn" class="stable-btn transition-all hidden" title="Cycle Outline Level Filter">
+                    <span id="outline-level-filter-label" class="text-[10px] font-black leading-none">All</span>
+                </button>
+                <!-- CLEAR COMPLETED ICON -->
+                <button id="toggle-hide-completed" class="stable-btn transition-all" title="Hide DONE Lines">
+                    <i data-lucide="badge-check" class="w-[18px] h-[18px]"></i>
+                </button>
+                <!-- VIEW MODE ICON -->
+                <button id="toggle-view-mode" class="stable-btn text-accent transition-colors hidden" title="Cycle View Layout">
+                    <svg id="view-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+                </button>
+                <div class="h-4 w-px bg-white/20 mx-1"></div>
+                <!-- FIND ICON -->
+                <button id="open-find-btn" class="stable-btn hover:bg-white/10" title="Find"><i data-lucide="search" class="w-[18px] h-[18px]"></i></button>
+                <div id="find-bar" class="hidden items-center gap-2 text-xs ml-1 min-w-0 flex-1">
+                    <input id="find-input" type="text" class="min-w-[180px] flex-1 bg-white/90 text-slate-900 border border-slate-300 rounded px-2 py-1 outline-none" placeholder="Find in current tab">
+                    <input id="replace-input" type="text" class="min-w-[180px] flex-1 bg-white/90 text-slate-900 border border-slate-300 rounded px-2 py-1 outline-none" placeholder="Replace">
+                    <button id="find-next-btn" class="stable-btn hover:bg-white/10" title="Find Next"><i data-lucide="arrow-down" class="w-[18px] h-[18px]"></i></button>
+                    <button id="replace-btn" class="stable-btn hover:bg-white/10" title="Replace Current"><i data-lucide="replace" class="w-[18px] h-[18px]"></i></button>
+                    <button id="replace-all-btn" class="stable-btn hover:bg-white/10" title="Replace All"><i data-lucide="replace-all" class="w-[18px] h-[18px]"></i></button>
+                    <label class="flex items-center gap-1 whitespace-nowrap text-[11px]">
+                        <input id="find-fuzzy-toggle" type="checkbox" class="w-3.5 h-3.5">
+                        <span>Fuzzy</span>
+                    </label>
+                    <div id="find-meta" class="min-w-[132px] text-right whitespace-nowrap">
+                        <span id="find-count" class="opacity-80">0 matches</span>
+                        <span class="opacity-40 px-1">|</span>
+                        <span id="find-other-tabs">0:other</span>
+                    </div>
+                </div>
+            </div>
         </div>
+        <div class="flex items-center space-x-3">
+            <!-- SETTINGS ICON -->
+            <button id="open-settings-btn" class="stable-btn hover:bg-white/10 rounded transition-colors" title="Settings">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+            </button>
+            <div class="hidden md:flex items-center text-[10px] space-x-1 opacity-60">
+                <i data-lucide="cloud-check" class="w-3 h-3 text-green-500"></i>
+                <span id="save-status">Autosave Active</span>
+            </div>
+        </div>
+    </header>
+
+    <div id="app-body" class="flex flex-1 overflow-hidden flex-col">
+        <nav id="tabs-container" class="flex shrink-0 overflow-auto no-scrollbar"></nav>
+        <main id="editor-container" class="flex-1 relative overflow-hidden"></main>
     </div>
 
-    <footer class="status-bar shrink-0">
-        <div class="save-indicator"><span class="save-check"><i data-lucide="check"></i></span><span id="save-status">Autosave active</span></div>
-        <span id="status-filename" class="status-filename">untitled.txt</span>
-        <div class="document-stats">
-            <span>Lines: <b id="stat-lines">1</b></span>
-            <span>Words: <b id="stat-words">0</b></span>
-            <span>Characters: <b id="stat-chars">0</b></span>
-            <span id="stat-outline-levels" class="hidden"></span>
-            <span>Read time: <b id="stat-time">1m</b></span>
-            <span>UTF-8</span>
-            <span id="status-mode" class="sr-only">Editor Active</span>
+    <footer class="text-slate-400 text-[10px] px-3 h-6 flex justify-between items-center shrink-0">
+        <div class="flex space-x-4 items-center">
+            <span id="status-filename" class="font-bold text-accent uppercase tracking-widest">untitled.txt</span>
+            <div class="h-3 w-px bg-slate-300 dark:bg-slate-700 mx-1"></div>
+            <div class="flex items-center space-x-3">
+                <span>Lines: <b id="stat-lines" class="text-current">1</b></span>
+                <span>Words: <b id="stat-words" class="text-current">0</b></span>
+                <span>Chars: <b id="stat-chars" class="text-current">0</b></span>
+                <span id="stat-outline-levels" class="hidden text-accent font-semibold"></span>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4">
+            <div class="hidden sm:flex items-center opacity-80">
+                <i data-lucide="clock" class="w-3 h-3 mr-1"></i>
+                <span>Est. Read: <b id="stat-time">1m</b></span>
+            </div>
+            <span class="uppercase font-mono">UTF-8</span>
+            <span id="status-mode" class="text-accent font-black uppercase tracking-tighter bg-accent/10 px-1.5 py-0.5 rounded">Editor Active</span>
         </div>
     </footer>
 

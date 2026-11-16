@@ -220,11 +220,11 @@
             const tabs = domRefs['tabs-container'];
             if (!body || !tabs) return;
             if (state.theme.orientation === 'vertical') {
-                body.className = "flex flex-1 min-h-0 overflow-hidden flex-row tabs-vertical";
-                tabs.className = "flex flex-col shrink-0 overflow-y-auto no-scrollbar";
+                body.className = "flex flex-1 overflow-hidden flex-row tabs-vertical";
+                tabs.className = "flex flex-col w-[150px] shrink-0 overflow-y-auto no-scrollbar pt-2 border-r border-black/10";
             } else {
-                body.className = "flex flex-1 min-h-0 overflow-hidden flex-col tabs-horizontal";
-                tabs.className = "flex overflow-x-auto no-scrollbar shrink-0";
+                body.className = "flex flex-1 overflow-hidden flex-col tabs-horizontal";
+                tabs.className = "flex items-end h-9 px-2 pt-1 overflow-x-auto no-scrollbar shrink-0";
             }
         }
 
@@ -1131,43 +1131,6 @@
             selection.addRange(range);
         }
 
-        function getLineOffsetAtPoint(line, x, y) {
-            const point = document.caretPositionFromPoint?.(x, y);
-            const range = point
-                ? (() => {
-                    const nextRange = document.createRange();
-                    nextRange.setStart(point.offsetNode, point.offset);
-                    nextRange.collapse(true);
-                    return nextRange;
-                })()
-                : document.caretRangeFromPoint?.(x, y);
-
-            if (!range || !line.contains(range.startContainer)) return null;
-            const prefix = range.cloneRange();
-            prefix.selectNodeContents(line);
-            prefix.setEnd(range.startContainer, range.startOffset);
-            return prefix.toString().length;
-        }
-
-        function selectSelectionAndNextWord(line, start, end) {
-            const text = line.textContent || '';
-            const nextWord = [...text.matchAll(/\S+/g)].find(word => word.index >= end);
-            selectLineRange(line, start, nextWord ? nextWord.index + nextWord[0].length : end);
-        }
-
-        function areSelectionOffsetsEqual(first, second) {
-            return Boolean(first && second && first.start === second.start && first.end === second.end);
-        }
-
-        function isOffsetInSelectedWord(line, offset, selection) {
-            if (offset === null || !selection) return false;
-            return [...(line.textContent || '').matchAll(/\S+/g)].some(word => {
-                const start = word.index;
-                const end = start + word[0].length;
-                return start >= selection.start && end <= selection.end && offset >= start && offset <= end;
-            });
-        }
-
         function goToSearchResult(index) {
             if (!state.search.results.length) return;
             const targetIndex = ((index % state.search.results.length) + state.search.results.length) % state.search.results.length;
@@ -1902,11 +1865,11 @@
                 };
                 
                 el.innerHTML = `
-                    <button class="mv-toggle ${mvStatusClass} flex items-center justify-center transition-colors text-current" title="${isSelected ? `Multi-view position ${mvIndex + 1}` : 'Add to multi-view'}" aria-label="${isSelected ? `Multi-view position ${mvIndex + 1}` : 'Add to multi-view'}">
-                        ${isSelected ? `<span class="multi-view-index">${mvIndex + 1}</span>` : '<i data-lucide="file-text"></i>'}
+                    <button class="mv-toggle ${mvStatusClass} mr-2 w-4 h-4 flex items-center justify-center rounded border transition-colors text-current ${isSelected ? 'font-bold text-[10px]' : 'opacity-75 hover:opacity-100'}">
+                        ${isSelected ? (mvIndex + 1) : '<div class="w-1.5 h-1.5 rounded-full border border-current"></div>'}
                     </button>
                     <span class="tab-title truncate flex-1">${tab.title}</span>
-                    <button class="close-tab transition-colors" title="Close tab" aria-label="Close tab">
+                    <button class="close-tab ml-2 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
                         <i data-lucide="x" class="w-3 h-3"></i>
                     </button>
                 `;
@@ -1943,13 +1906,6 @@
         function setViewModeIcon(mode) {
             const icon = domRefs['view-mode-icon'];
             if (!icon) return;
-            if (mode === 'single') {
-                icon.innerHTML = `
-                    <rect x="4" y="4" width="16" height="16" rx="1"></rect>
-                    <path d="M9 4v16"></path>
-                `;
-                return;
-            }
             if (mode === 'horiz') {
                 icon.innerHTML = `
                     <rect x="5" y="4" width="14" height="7" rx="1"></rect>
@@ -2216,14 +2172,8 @@
                     line.classList.remove('drag-ready');
                 };
 
-                let selectionBeforeDoubleClick = null;
-                let doubleClickSelection = null;
                 line.onmousedown = (e) => {
                     if (e.button !== 0) return;
-                    if (e.detail % 2 === 1) {
-                        selectionBeforeDoubleClick = getSelectionOffsets(line);
-                    }
-                    if (e.detail >= 3) e.preventDefault();
                     const rowIsSelected = isLineIndexSelected(tab.id, node.index);
                     if (e.shiftKey && (line.classList.contains('drag-ready') || rowIsSelected)) {
                         e.stopPropagation();
@@ -2233,19 +2183,6 @@
                     } else {
                         state.pendingLineDrag = null;
                     }
-                };
-
-                line.ondblclick = (e) => {
-                    const previousSelection = selectionBeforeDoubleClick;
-                    selectionBeforeDoubleClick = null;
-                    const offset = getLineOffsetAtPoint(line, e.clientX, e.clientY);
-                    if (areSelectionOffsetsEqual(previousSelection, doubleClickSelection)
-                        && isOffsetInSelectedWord(line, offset, previousSelection)) {
-                        selectSelectionAndNextWord(line, previousSelection.start, previousSelection.end);
-                        doubleClickSelection = getSelectionOffsets(line);
-                        return;
-                    }
-                    doubleClickSelection = getSelectionOffsets(line);
                 };
 
                 row.onmousedown = (e) => {
@@ -2611,31 +2548,17 @@
                 levelFilterBtn.classList.toggle('hidden', !t.outlineModeActive);
                 const hasLevelFilter = Number.isInteger(t.outlineLevelFilter);
                 const currentLevel = hasLevelFilter ? t.outlineLevelFilter : null;
-                levelFilterLabel.textContent = hasLevelFilter ? `Level ${currentLevel}` : 'All levels';
+                levelFilterLabel.textContent = hasLevelFilter ? `L${currentLevel}` : 'All';
                 levelFilterBtn.title = hasLevelFilter
                     ? `Showing outline through level ${currentLevel}. Click to cycle.`
                     : 'Showing all outline levels expanded. Click to show Level 1 only.';
             }
 
             const mvBtn = domRefs['toggle-view-mode'];
-            const mvLabel = document.getElementById('view-mode-label');
             if (state.multiViewIds.length > 1) {
                 mvBtn.classList.remove('hidden');
-                mvBtn.disabled = false;
                 setViewModeIcon(state.multiViewMode);
-                if (mvLabel) {
-                    mvLabel.textContent = state.multiViewMode === 'horiz'
-                        ? 'Horizontal view'
-                        : state.multiViewMode === 'card'
-                            ? 'Grid view'
-                            : 'Vertical view';
-                }
-            } else {
-                mvBtn.classList.remove('hidden');
-                mvBtn.disabled = true;
-                setViewModeIcon('single');
-                if (mvLabel) mvLabel.textContent = 'Single view';
-            }
+            } else mvBtn.classList.add('hidden');
 
             domRefs['undo-btn'].disabled = !canUndo();
             domRefs['redo-btn'].disabled = !canRedo();
@@ -2663,31 +2586,12 @@
             lucide.createIcons();
         }
 
-        function ensureTextFilename(filename) {
-            return filename.toLowerCase().endsWith('.txt') ? filename : filename + '.txt';
-        }
-
         function getExportFilename(baseName) {
-            if (!state.theme.dateTimeExport) return baseName;
-
-            const extensionIndex = baseName.lastIndexOf('.');
-            const hasExtension = extensionIndex > 0;
-            const name = hasExtension ? baseName.slice(0, extensionIndex) : baseName;
-            const extension = hasExtension ? baseName.slice(extensionIndex) : '';
-            // Colons are not valid in Windows filenames, so use a filesystem-safe ISO timestamp.
-            const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
-            return name + '_' + dateStr + extension;
-        }
-
-        function getSafeExportFilename(filename) {
-            const safeFilename = filename
-                .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
-                .replace(/[. ]+$/g, '');
-            return safeFilename || 'untitled.txt';
-        }
-
-        function getTabExportFilename(tab) {
-            return getSafeExportFilename(getExportFilename(ensureTextFilename(tab.title)));
+            if (state.theme.dateTimeExport) {
+                const dateStr = new Date().toISOString();
+                return baseName + '_' + dateStr;
+            }
+            return baseName;
         }
 
         function triggerDownload(filename, content) {
@@ -2695,110 +2599,37 @@
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = ensureTextFilename(filename);
+            a.download = filename.endsWith('.txt') ? filename : filename + '.txt';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
         }
 
-        async function getAvailableExportFileHandle(directoryHandle, filename) {
-            const extensionIndex = filename.lastIndexOf('.');
-            const hasExtension = extensionIndex > 0;
-            const name = hasExtension ? filename.slice(0, extensionIndex) : filename;
-            const extension = hasExtension ? filename.slice(extensionIndex) : '';
-
-            for (let duplicateIndex = 0; ; duplicateIndex++) {
-                const candidate = duplicateIndex === 0
-                    ? filename
-                    : `${name} (${duplicateIndex})${extension}`;
-                try {
-                    await directoryHandle.getFileHandle(candidate);
-                } catch (error) {
-                    if (error.name !== 'NotFoundError') throw error;
-                    return {
-                        filename: candidate,
-                        handle: await directoryHandle.getFileHandle(candidate, { create: true })
-                    };
-                }
-            }
-        }
-
-        async function exportAllToDirectory() {
-            const directoryHandle = await window.showDirectoryPicker({
-                id: 'tabforge-export-folder',
-                mode: 'readwrite',
-                startIn: 'downloads'
-            });
-
-            const exportedFilenames = [];
-            for (const tab of state.tabs) {
-                const { filename, handle } = await getAvailableExportFileHandle(directoryHandle, getTabExportFilename(tab));
-                const writable = await handle.createWritable();
-                try {
-                    await writable.write(tab.content);
-                    await writable.close();
-                } catch (error) {
-                    try {
-                        await writable.abort();
-                    } catch (_) {
-                        // The stream may already have closed before the failed operation.
-                    }
-                    throw error;
-                }
-                exportedFilenames.push(filename);
-            }
-            return exportedFilenames;
-        }
-
-        function setExportStatus(message) {
-            const status = domRefs['save-status'];
-            if (status) status.innerText = message;
-        }
-
         async function exportAll() {
-            try {
-                if (state.theme.zipExport) {
-                    const zip = new JSZip();
-                    state.tabs.forEach(tab => {
-                        zip.file(getTabExportFilename(tab), tab.content);
-                    });
-                    const blob = await zip.generateAsync({ type: "blob" });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = getExportFilename("tabForge_Export") + ".zip";
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                    markManualSaveAll();
-                    setExportStatus(`Exported ${state.tabs.length} tabs as a ZIP`);
-                    return;
-                }
-
-                if (window.isSecureContext && typeof window.showDirectoryPicker === 'function') {
-                    await exportAllToDirectory();
-                    markManualSaveAll();
-                    setExportStatus(`Exported ${state.tabs.length} tabs to the selected folder`);
-                    return;
-                }
-
+            if (state.theme.zipExport) {
+                const zip = new JSZip();
+                state.tabs.forEach(tab => {
+                    const name = tab.title.endsWith('.txt') ? tab.title : tab.title + '.txt';
+                    zip.file(getExportFilename(name), tab.content);
+                });
+                const blob = await zip.generateAsync({ type: "blob" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = getExportFilename("tabForge_Export") + ".zip";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            } else {
                 state.tabs.forEach((tab, index) => {
                     setTimeout(() => {
-                        triggerDownload(getTabExportFilename(tab), tab.content);
+                        triggerDownload(getExportFilename(tab.title), tab.content);
                     }, index * 200);
                 });
-                markManualSaveAll();
-                setExportStatus(`Exporting ${state.tabs.length} tabs as downloads`);
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    setExportStatus('Export cancelled');
-                    return;
-                }
-                console.error('[tabForge] export failed', error);
-                setExportStatus('Export failed — no tabs were marked as saved');
             }
+            markManualSaveAll();
         }
 
         function getMarkerTypeForDepth(depth) {
@@ -3310,30 +3141,6 @@
         }
 
         function setupListeners() {
-            const closeApplicationMenus = (except = null) => {
-                document.querySelectorAll('.app-menu[open]').forEach(menu => {
-                    if (menu !== except) menu.removeAttribute('open');
-                });
-            };
-            document.querySelectorAll('.app-menu > summary').forEach(summary => {
-                summary.addEventListener('click', () => closeApplicationMenus(summary.parentElement));
-            });
-            document.querySelectorAll('[data-proxy]').forEach(proxy => {
-                proxy.addEventListener('click', () => {
-                    const target = document.getElementById(proxy.dataset.proxy);
-                    if (target && !target.disabled) target.click();
-                });
-            });
-            document.querySelectorAll('.menu-popover .menu-item').forEach(item => {
-                item.addEventListener('click', () => closeApplicationMenus());
-            });
-            document.addEventListener('pointerdown', (event) => {
-                if (!event.target.closest('.app-menu')) closeApplicationMenus();
-            });
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape') closeApplicationMenus();
-            });
-
             // Setup critical toggle buttons first
             if (domRefs['toggle-hide-completed']) {
                 domRefs['toggle-hide-completed'].onclick = () => {
