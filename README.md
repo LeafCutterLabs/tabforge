@@ -38,16 +38,3 @@
 2. Open `index.html` in your browser
 
 That is it.
-
-## Development checks
-
-Node.js 18 or newer is needed only for the checks; the app still runs directly in a browser without a build or installed dependencies.
-
-```sh
-npm test
-npm run benchmark
-```
-
-The regression suite covers render scheduling, undo/redo, search, cache invalidation, malformed saved data, and interrupted storage writes. The benchmark measures repeated search lookups and outline-statistics reads on a 2,000-line document. To compare another version of the app, run `node scripts/benchmark.cjs /path/to/app.js`.
-
-Autosave waits for 500 ms of inactivity and flushes at least every two seconds during continuous editing, as well as when the page is hidden or closed. A complete recovery snapshot is committed before the legacy storage keys; startup prefers this snapshot so interrupted writes cannot mix workspace versions. Storage failures remain visible in the status bar until a later save succeeds. Browser storage limits still apply, and text/ZIP exports provide portable backups.

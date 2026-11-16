@@ -1,8 +1,6 @@
 (function (global) {
     function normalizeCollapsedLines(collapsedLines) {
-        return Array.isArray(collapsedLines)
-            ? [...new Set(collapsedLines.filter(index => Number.isInteger(index) && index >= 0))]
-            : [];
+        return Array.isArray(collapsedLines) ? collapsedLines.filter(Number.isInteger) : [];
     }
 
     function createTabRecord({
@@ -29,11 +27,11 @@
             showZebra,
             showWordWrap,
             outlineModeActive,
-            outlineLevelFilter: Number.isInteger(outlineLevelFilter) && outlineLevelFilter > 0 ? outlineLevelFilter : null,
+            outlineLevelFilter: Number.isInteger(outlineLevelFilter) ? outlineLevelFilter : null,
             hideCompletedLines,
             collapsedLines: normalizeCollapsedLines(collapsedLines),
             manualSavedContent: typeof manualSavedContent === 'string' ? manualSavedContent : content,
-            manualSavedAt: Number.isFinite(manualSavedAt) ? manualSavedAt : Date.now()
+            manualSavedAt: typeof manualSavedAt === 'number' ? manualSavedAt : Date.now()
         };
     }
 
