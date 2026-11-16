@@ -9,7 +9,11 @@ function loadApp(appPath = path.join(__dirname, '..', 'app.js')) {
     let nextId = 0;
     const context = vm.createContext({
         console, Map, Set, WeakMap,
-        document: { addEventListener() {}, querySelector() { return null; } },
+        document: {
+            addEventListener() {}, querySelector() { return null; },
+            querySelectorAll() { return []; }, elementFromPoint() { return null; }
+        },
+        getSelection() { return { rangeCount: 0, removeAllRanges() {} }; },
         requestAnimationFrame(callback) { callbacks.set(++nextId, callback); return nextId; },
         cancelAnimationFrame(id) { callbacks.delete(id); },
         setTimeout(callback, delay) { timers.set(++nextId, { callback, at: now + delay }); return nextId; },

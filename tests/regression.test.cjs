@@ -225,3 +225,228 @@ test('typing after undo starts a fresh undo group and clears redo', () => {
     app.performUndo();
     assert.equal(app.run('getActiveTab().content'), 'first');
 });
+
+function lineApp(content, options = {}) {
+    const app = loadApp();
+    app.fixture = { id: 'a', content, ...options };
+    app.run(`
+        state.tabs = [createTabRecord(fixture)]; state.activeTabId = 'a';
+        renderTabs = renderEditorArea = updateToolbarUI = syncFindBarUi = () => {};
+    `);
+    return app;
+}
+
+function inputEvent(overrides = {}) {
+    return {
+        button: 0, clientX: 10, clientY: 20, shiftKey: false,
+        ctrlKey: false, metaKey: false, altKey: false, defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.propagationStopped = true; },
+        ...overrides
+    };
+}
+
+test('gutter selection focuses the line keyboard target and Shift arrows shrink and reverse from its anchor', () => {
+    const app = lineApp('zero\none\ntwo\nthree\nfour');
+    let focusCount = 0;
+    app.document.querySelector = selector => selector.endsWith('.outline-root')
+        ? { focus() { focusCount++; } } : null;
+    const click = inputEvent();
+    app.selectLineFromGutter(click, 'a', 2);
+    app.endDragSelection();
+    assert.equal(click.defaultPrevented, true);
+    assert.equal(click.propagationStopped, true);
+    assert.equal(focusCount, 1);
+    for (const [key, indices] of [
+        ['ArrowDown', [2, 3]], ['ArrowDown', [2, 3, 4]],
+        ['ArrowDown', [2, 3, 4]], ['ArrowUp', [2, 3]], ['ArrowUp', [2]],
+        ['ArrowUp', [1, 2]], ['ArrowUp', [0, 1, 2]], ['ArrowUp', [0, 1, 2]],
+        ['ArrowDown', [1, 2]], ['ArrowDown', [2]], ['ArrowDown', [2, 3]]
+    ]) {
+        const event = inputEvent({ key, shiftKey: true });
+        app.handleLineSelectionKeydown(event, 'a');
+        assert.equal(event.defaultPrevented, true);
+        assert.deepEqual(plain(app.getSelectedLineIndices('a')), indices);
+        assert.equal(app.run('state.selectedLineAnchor.index'), 2);
+    }
+    assert.equal(app.run('state.activeLineIndex'), 3);
+    assert.equal(focusCount, 12);
+});
+
+test('gutter Shift-click and modifier-click work while grabbing an already selected line preserves its range', () => {
+    const app = lineApp('zero\none\ntwo\nthree\nfour');
+    app.selectLineFromGutter(inputEvent(), 'a', 1);
+    app.endDragSelection();
+    app.selectLineFromGutter(inputEvent({ shiftKey: true }), 'a', 3);
+    app.endDragSelection();
+    app.selectLineFromGutter(inputEvent(), 'a', 2);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1, 2, 3]);
+    assert.equal(app.run('state.selectedLineAnchor.index'), 1);
+    assert.equal(app.run('state.activeLineIndex'), 3);
+    assert.equal(app.run('state.pendingLineDrag.lineIndex'), 2);
+    app.endDragSelection();
+    app.selectLineFromGutter(inputEvent({ ctrlKey: true }), 'a', 2);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1, 3]);
+    assert.equal(app.run('state.pendingLineDrag'), null);
+    app.selectLineFromGutter(inputEvent({ metaKey: true }), 'a', 2);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1, 2, 3]);
+    app.selectLineFromGutter(inputEvent({ button: 2 }), 'a', 4);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1, 2, 3]);
+});
+
+test('clicking the gutter of a line with a native caret still creates an explicit line selection', () => {
+    const app = lineApp('zero\none\ntwo');
+    app.run('isLineIndexSelected = () => true');
+    app.selectLineFromGutter(inputEvent(), 'a', 1);
+    assert.deepEqual(plain(app.run('state.selectedLineRange')), { tabId: 'a', start: 1, end: 1 });
+});
+
+test('Shift arrows navigate visible rows and include hidden lines in the whole-line range', () => {
+    const app = lineApp('parent\n\tchild\n\t\tgrandchild\nnext', { collapsedLines: [0] });
+    app.setSingleLineSelection('a', 0);
+    app.handleLineSelectionKeydown(inputEvent({ key: 'ArrowDown', shiftKey: true }), 'a');
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [0, 1, 2, 3]);
+    app.handleLineSelectionKeydown(inputEvent({ key: 'ArrowUp', shiftKey: true }), 'a');
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [0]);
+    const modified = inputEvent({ key: 'ArrowDown', shiftKey: true, ctrlKey: true });
+    app.handleLineSelectionKeydown(modified, 'a');
+    assert.equal(modified.defaultPrevented, false);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [0]);
+});
+
+test('dragging any selected parent expands the block through all descendants including collapsed ones', () => {
+    const app = lineApp('first\n\tchild\n\t\tgrandchild !!\n\tother\nsecond\n\tlast\nend', { collapsedLines: [0, 1, 4] });
+    app.setSingleLineSelection('a', 0);
+    assert.deepEqual(plain(app.getDragMoveRange('a', 0)), { start: 0, end: 3 });
+    app.setSelectedLineRange('a', 1, 4);
+    assert.deepEqual(plain(app.getDragMoveRange('a', 2)), { start: 1, end: 5 });
+    app.setSelectedLineRange('a', 0, 2);
+    assert.deepEqual(plain(app.getDragMoveRange('a', 1)), { start: 0, end: 3 });
+    app.setSelectedLineIndices('a', [0, 4]);
+    assert.deepEqual(plain(app.getDragMoveRange('a', 4)), { start: 4, end: 5 });
+});
+
+test('drag threshold and the first move resolve the insertion target after a folded subtree', () => {
+    const app = lineApp('source\nparent\n\tchild\n\t\tgrandchild\nend', { collapsedLines: [1] });
+    app.selectLineFromGutter(inputEvent(), 'a', 0);
+    app.handlePendingLineDrag(inputEvent({ clientX: 15, clientY: 25 }));
+    assert.equal(app.run('state.dragMove'), null);
+    const cell = { dataset: { editorTab: 'a' } };
+    const row = {
+        dataset: { rowIndex: '1' }, getBoundingClientRect: () => ({ top: 0, height: 24 }),
+        closest: selector => selector === '.editor-cell' ? cell : row
+    };
+    app.document.elementFromPoint = () => row;
+    app.handlePendingLineDrag(inputEvent({ clientX: 16, clientY: 25 }));
+    assert.equal(app.run('state.pendingLineDrag'), null);
+    assert.equal(app.run('state.dragMove.targetIndex'), 4);
+    assert.equal(app.run('state.dragMove.position'), 'after');
+    app.updateLineDragMoveTarget('a', 1, 'before');
+    assert.equal(app.run('state.dragMove.targetIndex'), 1);
+    app.finishLineDragMove();
+    assert.equal(app.run('globalActionHistory.undo.length'), 0);
+    assert.equal(app.run('getActiveTab().content'), 'source\nparent\n\tchild\n\t\tgrandchild\nend');
+});
+
+test('moving a folded block up or down preserves indentation, nested folds, selection and undo/redo', () => {
+    for (const direction of ['up', 'down']) {
+        const block = ['parent', '\tchild', '\t\tgrandchild', '\tother'];
+        const before = direction === 'down' ? [...block, 'middle', 'end'] : ['middle', 'end', ...block];
+        const after = direction === 'down' ? ['middle', 'end', ...block] : [...block, 'middle', 'end'];
+        const start = direction === 'down' ? 0 : 2;
+        const movedStart = direction === 'down' ? 2 : 0;
+        const app = lineApp(before.join('\n'), { collapsedLines: [start, start + 1] });
+        app.setSingleLineSelection('a', start);
+        app.startLineDragMove('a', start);
+        app.updateLineDragMoveTarget('a', direction === 'down' ? 5 : 0, direction === 'down' ? 'after' : 'before');
+        app.finishLineDragMove();
+        app.flushFrames();
+        assert.equal(app.run('getActiveTab().content'), after.join('\n'));
+        assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [movedStart, movedStart + 1]);
+        assert.deepEqual(plain(app.getSelectedLineIndices('a')), [movedStart, movedStart + 1, movedStart + 2, movedStart + 3]);
+        assert.equal(app.run('globalActionHistory.undo.length'), 1);
+        app.performUndo(); app.flushFrames();
+        assert.equal(app.run('getActiveTab().content'), before.join('\n'));
+        assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [start, start + 1]);
+        assert.deepEqual(plain(app.getSelectedLineIndices('a')), [start]);
+        assert.equal(app.run('state.selectedLineAnchor.index'), start);
+        app.performRedo(); app.flushFrames();
+        assert.equal(app.run('getActiveTab().content'), after.join('\n'));
+        assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [movedStart, movedStart + 1]);
+        assert.deepEqual(plain(app.getSelectedLineIndices('a')), [movedStart, movedStart + 1, movedStart + 2, movedStart + 3]);
+    }
+});
+
+test('no-op drops, Escape and drops outside the source pane leave content and undo history untouched', () => {
+    const app = lineApp('zero\none\ntwo\nthree');
+    app.setSelectedLineRange('a', 1, 2);
+    for (const [index, position] of [[1, 'before'], [1, 'after'], [2, 'after']]) {
+        app.startLineDragMove('a', 1);
+        app.updateLineDragMoveTarget('a', index, position);
+        app.finishLineDragMove();
+    }
+    app.startLineDragMove('a', 1);
+    app.updateLineDragMoveTarget('a', 0, 'before');
+    app.handleLineSelectionKeydown(inputEvent({ key: 'Escape' }), 'a');
+    assert.equal(app.run('state.dragMove'), null);
+    app.startLineDragMove('a', 1);
+    app.updateLineDragMoveTarget('a', 0, 'before');
+    app.handlePendingLineDrag(inputEvent());
+    assert.equal(app.run('state.dragMove.targetIndex'), null);
+    app.finishLineDragMove();
+    assert.equal(app.run('getActiveTab().content'), 'zero\none\ntwo\nthree');
+    assert.equal(app.run('globalActionHistory.undo.length'), 0);
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1, 2]);
+});
+
+test('folding hides even one attention-marked child and retains nested fold state through undo/redo', () => {
+    const app = lineApp('single\n\tonly child !!\nparent\n\tnested\n\t\tgrandchild ??\nend');
+    const visible = () => plain(app.run('getVisibleLineState(getActiveTab()).visible.map(node => node.index)'));
+    app.toggleLineFold('a', 0);
+    assert.deepEqual(visible(), [0, 2, 3, 4, 5]);
+    app.toggleLineFold('a', 3);
+    app.toggleLineFold('a', 2);
+    assert.deepEqual(visible(), [0, 2, 5]);
+    app.toggleLineFold('a', 2);
+    assert.deepEqual(visible(), [0, 2, 3, 5]);
+    assert.deepEqual(plain(app.run('getActiveTab().collapsedLines')), [0, 3]);
+    app.performUndo();
+    assert.deepEqual(visible(), [0, 2, 5]);
+    app.performRedo();
+    assert.deepEqual(visible(), [0, 2, 3, 5]);
+    const undoCount = app.run('globalActionHistory.undo.length');
+    app.toggleLineFold('a', 5);
+    assert.equal(app.run('globalActionHistory.undo.length'), undoCount);
+});
+
+test('line-selection shortcuts leave other controls and already handled editing events alone', () => {
+    const app = lineApp('zero\none\ntwo');
+    app.setSelectedLineRange('a', 0, 1);
+    const otherInput = { closest: selector => selector.includes('input') ? {} : null };
+    for (const handler of ['handleSelectedRangeDelete', 'handleSelectedRangeTab', 'handleSelectedRangeCopy', 'handleSelectedRangeCut', 'handleSelectedRangePaste']) {
+        const event = inputEvent({ key: handler.endsWith('Tab') ? 'Tab' : 'Delete', target: otherInput });
+        app[handler](event);
+        assert.equal(event.defaultPrevented, false);
+    }
+    const handled = inputEvent({ key: 'Delete', defaultPrevented: true });
+    app.handleSelectedRangeDelete(handled);
+    assert.equal(app.run('getActiveTab().content'), 'zero\none\ntwo');
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [0, 1]);
+});
+
+test('immediate undo cancels stale editing focus so the restored line selection survives', () => {
+    const app = lineApp('zero\none\ntwo');
+    app.run(`
+        getLineEditor = () => ({
+            focus() { clearSelectedLineSelection(); },
+            scrollIntoView() {}, textContent: ''
+        });
+        placeCaret = () => {};
+        setSingleLineSelection('a', 1);
+        deleteSelectedRangeLines();
+        performUndo();
+    `);
+    app.flushFrames();
+    assert.equal(app.run('getActiveTab().content'), 'zero\none\ntwo');
+    assert.deepEqual(plain(app.getSelectedLineIndices('a')), [1]);
+});

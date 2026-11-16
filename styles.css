@@ -8,6 +8,8 @@
             --accent-color: #2563eb;
             --accent-hover: #1d4ed8;
             --selected-soft-bg: #DBEAFE;
+            --line-selection-bg: #c7ddff;
+            --line-selection-border: #1d4ed8;
             --editor-bg: #F3F4F6;
             --editor-text: #0F172A;
             --editor-stripe: #EAECEF;
@@ -41,6 +43,8 @@
             --accent-color: #2563eb;
             --accent-hover: #1d4ed8;
             --selected-soft-bg: rgba(37, 99, 235, 0.18);
+            --line-selection-bg: #1f4771;
+            --line-selection-border: #8dbdff;
             --bg-ui-dark: #0F172A;
             --tab-bar-bg: #162033;
             --bg-ui-page: #020617;
@@ -67,6 +71,8 @@
             --accent-color: #16A34A;
             --accent-hover: #1FBF4A;
             --selected-soft-bg: rgba(22, 163, 74, 0.18);
+            --line-selection-bg: #0b4020;
+            --line-selection-border: #3dff6b;
             --editor-bg: #020602;
             --editor-text: #3DFF6B;
             --bg-ui-dark: #030A03;
@@ -209,6 +215,7 @@
         }
 
         .outline-row {
+            position: relative;
             display: flex;
             min-height: var(--editor-lh);
             align-items: stretch;
@@ -221,24 +228,6 @@
 
         .outline-row.zebra-row-alt {
             background: var(--editor-stripe);
-        }
-
-        .outline-row.row-selected {
-            background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-        }
-
-        .outline-row.drag-source {
-            background: color-mix(in srgb, var(--accent-color) 18%, white 8%);
-            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-color) 42%, transparent);
-            opacity: 0.92;
-        }
-
-        .outline-row.drop-before {
-            box-shadow: inset 0 2px 0 var(--accent-color);
-        }
-
-        .outline-row.drop-after {
-            box-shadow: inset 0 -2px 0 var(--accent-color);
         }
 
         .outline-row.attention-question {
@@ -344,9 +333,11 @@
 
         .outline-gutter .line-number-label {
             min-width: 0;
+            flex: 1;
             display: inline-flex;
             justify-content: flex-end;
-            align-self: stretch;
+            align-self: flex-start;
+            min-height: var(--editor-lh);
             align-items: center;
             padding-left: 3px;
         }
@@ -1158,10 +1149,75 @@
 
         .outline-gutter {
             min-height: var(--editor-lh);
-            padding-right: 17px;
+            padding: 0 10px 0 5px;
             background: transparent;
             border-color: var(--border-color);
         }
+
+        .outline-gutter.fold-only {
+            width: 30px;
+            padding: 0 4px;
+        }
+
+        .outline-gutter.line-selectable { cursor: grab; }
+        .outline-gutter.line-selectable:active { cursor: grabbing; }
+
+        .line-fold-toggle,
+        .line-fold-spacer {
+            flex: 0 0 20px;
+            width: 20px;
+            height: min(20px, var(--editor-lh));
+            align-self: flex-start;
+            margin-top: max(0px, calc((var(--editor-lh) - 20px) / 2));
+        }
+
+        .line-fold-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border: 0;
+            border-radius: 3px;
+            background: transparent;
+            color: var(--editor-text);
+            cursor: pointer;
+        }
+
+        .line-fold-toggle::before {
+            content: "";
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            border-left: 6px solid currentColor;
+        }
+
+        .line-fold-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+        .line-fold-toggle:hover { background: color-mix(in srgb, var(--editor-text) 14%, transparent); }
+
+        /* Keep whole-line selection above zebra, attention, and focus styling. */
+        .outline-row.row-selected,
+        .outline-row.drag-source,
+        .outline-row.row-selected:focus-within,
+        .outline-row.drag-source:focus-within {
+            background: var(--line-selection-bg);
+        }
+
+        .outline-row.row-selected .outline-gutter,
+        .outline-row.drag-source .outline-gutter { color: var(--editor-text); }
+
+        .outline-row.drop-before::before,
+        .outline-row.drop-after::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--line-selection-border);
+            pointer-events: none;
+            z-index: 4;
+        }
+
+        .outline-row.drop-before::before { top: 0; }
+        .outline-row.drop-after::before { bottom: 0; }
 
         .outline-line {
             min-height: var(--editor-lh);
@@ -1322,7 +1378,17 @@
 
         .outline-row.attention-question { border-left: 3px solid var(--special-question); }
         .outline-row.attention-urgent { border-left: 3px solid var(--special-urgent); }
-        .outline-row.drop-before { border-top: 2px solid var(--accent-color); }
-        .outline-row.drop-after { border-bottom: 2px solid var(--accent-color); }
+        .outline-row.row-selected,
+        .outline-row.drag-source { border-left: 0; }
+        .outline-row.row-selected::after,
+        .outline-row.drag-source::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border: 0;
+            border-left: 4px solid var(--line-selection-border);
+            pointer-events: none;
+            z-index: 2;
+        }
         .tabs-vertical .tab-active { border-left: 3px solid var(--accent-color) !important; }
         .swatch.active { outline: 2px solid var(--accent-color); outline-offset: 1px; }
