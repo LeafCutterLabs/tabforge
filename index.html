@@ -43,18 +43,38 @@
                 <div class="menu-popover">
                     <button id="toggle-line-numbers" class="menu-item"><i data-lucide="list-ordered"></i><span>Line numbers</span></button>
                     <button id="toggle-zebra" class="menu-item"><i data-lucide="rows-3"></i><span>Zebra rows</span></button>
+                    <button class="menu-item menu-proxy compact-menu-item" data-proxy="toggle-outline-mode" aria-pressed="false"><i data-lucide="list-tree"></i><span>Magic outline</span></button>
+                    <button class="menu-item menu-proxy compact-menu-item" data-proxy="toggle-word-wrap" aria-pressed="false"><i data-lucide="text-wrap"></i><span>Word wrap</span></button>
+                    <button id="outline-level-filter-btn" class="menu-item hidden" title="Cycle outline level filter">
+                        <i data-lucide="list"></i><span>Outline levels</span><span id="outline-level-filter-label" class="menu-value">All levels</span>
+                    </button>
+                    <button id="toggle-hide-completed" class="menu-item" title="Hide DONE lines" aria-pressed="false"><i data-lucide="eye-off"></i><span>Hide DONE</span></button>
+                    <button id="toggle-view-mode" class="menu-item" title="Cycle view layout">
+                        <svg id="view-mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+                        <span id="view-mode-label">Single view</span>
+                    </button>
+                    <div class="menu-separator"></div>
                     <button id="zoom-out-btn" class="menu-item"><i data-lucide="zoom-out"></i><span>Zoom out</span></button>
                     <button id="zoom-in-btn" class="menu-item"><i data-lucide="zoom-in"></i><span>Zoom in</span></button>
                 </div>
             </details>
         </nav>
 
+        <div id="toolbar-buttons" role="toolbar" aria-label="Editor controls">
+            <button id="manual-save-btn" class="header-command save-command" title="Save revision (Ctrl+S)" aria-label="Save revision"><i data-lucide="save"></i></button>
+            <button id="undo-btn" class="header-command" title="Undo (Ctrl+Z)" aria-label="Undo"><i data-lucide="undo-2"></i></button>
+            <button id="redo-btn" class="header-command" title="Redo (Ctrl+Y)" aria-label="Redo"><i data-lucide="redo-2"></i></button>
+            <span class="toolbar-separator" aria-hidden="true"></span>
+            <button id="toggle-outline-mode" class="header-command command-toggle" title="Magic outline" aria-label="Magic outline" aria-pressed="false"><i data-lucide="list-tree"></i><span>Outline</span></button>
+            <button id="toggle-word-wrap" class="header-command command-toggle" title="Word wrap" aria-label="Word wrap" aria-pressed="false"><i data-lucide="text-wrap"></i><span>Wrap</span></button>
+        </div>
+
         <div class="header-actions">
-            <button id="open-find-btn" class="search-launch" title="Find (Ctrl+F)">
-                <i data-lucide="search"></i><span>Find (Ctrl+F)</span><i data-lucide="chevron-down" class="search-chevron"></i>
+            <button id="open-find-btn" class="header-command search-launch" title="Find (Ctrl+F)" aria-label="Find and replace" aria-controls="find-bar" aria-expanded="false">
+                <i data-lucide="search"></i>
             </button>
-            <button id="open-settings-btn" class="settings-button" title="Settings">
-                <i data-lucide="settings"></i><span>Settings</span><i data-lucide="chevron-down"></i>
+            <button id="open-settings-btn" class="header-command settings-button" title="Settings" aria-label="Settings">
+                <i data-lucide="settings"></i>
             </button>
         </div>
 
@@ -77,35 +97,6 @@
         </div>
 
         <div id="editor-workspace">
-            <div id="toolbar-buttons" role="toolbar" aria-label="Editor controls">
-                <div class="save-split">
-                    <button id="manual-save-btn" class="toolbar-button toolbar-primary" title="Save"><i data-lucide="save"></i><span>Save</span></button>
-                    <button class="toolbar-primary save-menu-proxy" data-proxy="manual-save-all-btn" title="Save all"><i data-lucide="chevron-down"></i></button>
-                </div>
-                <span class="toolbar-separator"></span>
-                <button id="undo-btn" class="toolbar-button" title="Undo"><i data-lucide="undo-2"></i><span>Undo</span></button>
-                <button id="redo-btn" class="toolbar-button" title="Redo"><i data-lucide="redo-2"></i><span>Redo</span></button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-outline-mode" class="toolbar-button toolbar-toggle" title="Toggle Magic Outline Mode">
-                    <i data-lucide="list-tree"></i><span>Magic outline</span><span class="switch-control" aria-hidden="true"></span>
-                </button>
-                <button id="outline-level-filter-btn" class="toolbar-button toolbar-select hidden" title="Cycle Outline Level Filter">
-                    <i data-lucide="list"></i><span id="outline-level-filter-label">All levels</span><i data-lucide="chevron-down"></i>
-                </button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-hide-completed" class="toolbar-button toolbar-toggle" title="Hide DONE Lines">
-                    <i data-lucide="eye-off"></i><span>Hide DONE</span><span class="switch-control" aria-hidden="true"></span>
-                </button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-word-wrap" class="toolbar-button toolbar-toggle" title="Word Wrap">
-                    <i data-lucide="text-wrap"></i><span>Wrap</span><span class="switch-control" aria-hidden="true"></span>
-                </button>
-                <span class="toolbar-separator"></span>
-                <button id="toggle-view-mode" class="toolbar-button toolbar-select" title="Cycle View Layout">
-                    <svg id="view-mode-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
-                    <span id="view-mode-label">Single view</span><i data-lucide="chevron-down"></i>
-                </button>
-            </div>
             <main id="editor-container" class="flex-1 relative overflow-hidden"></main>
         </div>
     </div>

@@ -5,6 +5,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 const checkInteractions = require('../tests/browser-interactions.cjs');
+const checkLayout = require('../tests/browser-layout.cjs');
 
 const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'output', 'playwright');
@@ -46,8 +47,9 @@ async function main() {
             .filter(element => getComputedStyle(element).display !== 'none').map(element => element.id)), [], 'visibility toggles override component display styles');
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         const results = await checkInteractions(page, { outputDir });
+        const compactLayout = await checkLayout(page, { outputDir });
         assert.deepEqual(externalRequests, [], 'the app needs no external asset requests');
-        console.log(JSON.stringify({ directFileOpening: 'passed', externalRequests, ...results }, null, 2));
+        console.log(JSON.stringify({ directFileOpening: 'passed', externalRequests, ...results, compactLayout }, null, 2));
     } finally {
         await browser?.close();
         await new Promise(resolve => server.close(resolve));

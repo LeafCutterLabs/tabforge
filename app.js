@@ -2860,6 +2860,7 @@
             toggles.forEach(item => {
                 const btn = domRefs[item.id];
                 if (btn) {
+                    btn.setAttribute('aria-pressed', String(Boolean(item.active)));
                     if (item.active) btn.classList.add('btn-active');
                     else btn.classList.remove('btn-active');
                 }
@@ -2932,6 +2933,15 @@
                 : 'Already At Last Save';
             updateSaveStatus();
             domRefs['open-find-btn'].classList.toggle('btn-active', state.search.open);
+            domRefs['open-find-btn'].setAttribute('aria-expanded', String(state.search.open));
+
+            document.querySelectorAll('[data-proxy]').forEach(proxy => {
+                const target = domRefs[proxy.dataset.proxy] || document.getElementById(proxy.dataset.proxy);
+                if (!target) return;
+                proxy.disabled = target.disabled;
+                const pressed = target.getAttribute('aria-pressed');
+                if (pressed !== null) proxy.setAttribute('aria-pressed', pressed);
+            });
 
             domRefs['zip-export-toggle'].checked = state.theme.zipExport;
             domRefs['date-time-export-toggle'].checked = state.theme.dateTimeExport;

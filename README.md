@@ -39,6 +39,8 @@
 
 The app includes its generated CSS, icon bundle, and ZIP library. Opening the HTML file needs no build, server, or external asset requests.
 
+The single 44-pixel header holds Save, Undo, Redo, Outline, Wrap, Find, and Settings. View contains Hide DONE, outline-level filtering, and multi-view layout. At narrow widths, Outline and Wrap also move into View. The 24-pixel bottom bar keeps the save status and all document statistics; it scrolls horizontally when they do not fit. Top and side tabs remain available. Compared with the former separate toolbar, the editor gains 98 pixels without changing text size.
+
 ## Selecting, moving, and folding lines
 
 Click a line number to select its whole row. Shift-click or Shift+Up/Down extends or shrinks the range from the original anchor; Ctrl/Meta-click toggles individual rows. Enter or F2 returns to text editing. Copy, cut, paste, Delete, Tab, and undo/redo work with the selected lines.
@@ -65,7 +67,7 @@ npm run check
 npm run benchmark
 ```
 
-`npm run check` runs both the unit and browser suites. Browser checks cover real clicks, keyboard focus, folds during editing, undo/redo, themes, wrapping, multiple panes, and a 5,000-line selection that must keep the existing DOM. They also open `index.html` directly and reject external asset requests. Set `HEADED=1` to watch the browser. Screenshots, including a failure screenshot when needed, go in the ignored `output/playwright/` directory. GitHub Actions runs the suites on pushes and pull requests to `tabforge-lite`.
+`npm run check` runs both the unit and browser suites. Browser checks cover real clicks, keyboard focus, folds during editing, undo/redo, themes, wrapping, multiple panes, and a 5,000-line selection that must keep the existing DOM. Layout checks cover the recovered editor space, bottom statistics, and compact commands at widths from 320 to 1280 pixels. They also open `index.html` directly and reject external asset requests. Set `HEADED=1` to watch the browser. Screenshots, including a failure screenshot when needed, go in the ignored `output/playwright/` directory. GitHub Actions runs the suites on pushes and pull requests to `tabforge-lite`.
 
 The benchmark measures cached search/statistics reads and 5,000 selected-line membership checks. To compare another version of the app, run `node scripts/benchmark.cjs /path/to/app.js`.
 
