@@ -3,10 +3,11 @@
 ## Neat Features
 
 - Tab-based editing
-- Create, duplicate, import, and manage multiple text files
+- Create, import, and manage multiple text files
 - Export current tab or all tabs as a ZIP
 - Print current tab
-- Copy current view
+- Grow word selections with repeated double-clicks
+- Whole-line selection, moving, and nested folding
 - Manual save, save all, restore to last save
 - Undo and redo
 - Autosave with local storage persistence
@@ -21,7 +22,6 @@
 - Outline level filtering
 - Hide completed lines
 - Single and multi-view layouts
-- Text case transformations
 - Theme support with accent color customization
 - Special markup highlighting for:
   - `!!`
@@ -40,6 +40,12 @@
 The app includes its generated CSS, icon bundle, and ZIP library. Opening the HTML file needs no build, server, or external asset requests.
 
 The single 44-pixel header holds Save, Undo, Redo, Outline, Wrap, Find, and Settings. View contains Hide DONE, outline-level filtering, and multi-view layout. At narrow widths, Outline and Wrap also move into View. The 24-pixel bottom bar keeps the save status and all document statistics; it scrolls horizontally when they do not fit. Top and side tabs remain available. Compared with the former separate toolbar, the editor gains 98 pixels without changing text size.
+
+## In-app feature reference
+
+Open the gear and select **Features** beside **Preferences** for the current version and an expandable outline of the available controls, shortcuts, and gestures. Open a category, then a feature to read its instructions. Nested folds retain their state when a parent is closed and reopened. Use Expand all or Collapse all to change the whole outline. Search by an action, keyword, or shortcut; matching branches open automatically, and clearing search restores your folds. Ctrl+F inside Settings opens the guide search, and Escape closes Settings. On Mac, Cmd shortcuts match their Ctrl equivalents in the guide.
+
+The inventory lives in `feature-catalog.js`, separately from its UI in `feature-guide.js`, so descriptions can be refined without changing editor behavior. Keep this inventory aligned with user-accessible features when adding or changing a command.
 
 ## Selecting, moving, and folding lines
 
@@ -78,5 +84,7 @@ The benchmark measures cached search/statistics reads and 5,000 selected-line me
 Run `npm run build` after changing utility classes or icon names in `index.html` or `app.js`. It generates `assets/utilities.css`, a bundle of only the Lucide icons in use, and local ZIP support, with dependency licenses. Commit `assets/` with source changes so direct HTML opening continues to work. Exact development dependency versions and `package-lock.json` make the build reproducible. Multi-view grid classes are explicitly listed in `tailwind.config.cjs` because they are assembled dynamically.
 
 The build also stages the app's runtime files in the ignored `dist/` directory. Netlify runs the build and unit tests before publishing only that directory; browser checks run in GitHub Actions.
+
+The release number comes from `package.json`. `npm run build` generates the committed `assets/release.js` used by the Features tab. Bump the package version for a release, for example with `npm version patch --no-git-tag-version`, and rebuild; the metadata test checks that the displayed version stays aligned with the package. This release number is independent of the browser-storage schema.
 
 Autosave waits for 500 ms of inactivity and flushes at least every two seconds during continuous editing, as well as when the page is hidden or closed. A complete recovery snapshot is committed before the legacy storage keys; startup prefers this snapshot so interrupted writes cannot mix workspace versions. Storage failures remain visible in the status bar until a later save succeeds. Browser storage limits still apply, and text/ZIP exports provide portable backups.

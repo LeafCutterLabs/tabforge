@@ -3540,17 +3540,25 @@
             const menu = domRefs['settings-menu'], overlay = domRefs['settings-overlay'];
             if (!menu || !overlay) return;
             clearTimeout(settingsHideTimer);
+            menu.inert = !open;
+            menu.setAttribute('aria-hidden', String(!open));
+            domRefs['open-settings-btn']?.setAttribute('aria-expanded', String(open));
             if (open) {
                 menu.classList.add('open');
                 overlay.classList.remove('hidden');
                 overlay.style.pointerEvents = 'auto';
-                requestAnimationFrame(() => { overlay.style.opacity = "1"; });
+                requestAnimationFrame(() => {
+                    if (!menu.classList.contains('open')) return;
+                    overlay.style.opacity = "1";
+                    menu.querySelector('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+                });
                 return;
             }
             menu.classList.remove('open');
             overlay.style.opacity = "0";
             overlay.style.pointerEvents = 'none';
             settingsHideTimer = setTimeout(() => { overlay.classList.add('hidden'); }, 200);
+            domRefs['open-settings-btn']?.focus({ preventScroll: true });
         }
 
         function init() {
@@ -3720,6 +3728,7 @@
                 requestRender('editor');
             };
             domRefs['file-input'].onchange = (e) => { Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onload = (ev) => addTab(file.name, ev.target.result); r.readAsText(file); }); e.target.value = ''; };
+            window.TabForgeFeatureGuide?.initialize({ onClose: () => toggleSettings(false) });
             domRefs['open-settings-btn'].addEventListener('click', () => toggleSettings(true));
             domRefs['close-settings-btn'].addEventListener('click', () => toggleSettings(false));
             domRefs['settings-overlay'].addEventListener('click', () => toggleSettings(false));

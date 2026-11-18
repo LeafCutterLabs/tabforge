@@ -485,12 +485,84 @@
         .tab-title.rename-ready { cursor: text; }
 
         #settings-menu {
+            --settings-text: #17233a;
+            --settings-muted: #52627c;
+            --settings-line: #dbe3ee;
+            --settings-soft: #f5f8fc;
             width: min(720px, calc(100vw - 32px));
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
             transform: translateX(100%);
             transition: transform 0.2s ease-in-out;
             pointer-events: none;
         }
         #settings-menu.open { transform: translateX(0); pointer-events: auto; }
+
+        .settings-heading { display: flex; align-items: center; justify-content: space-between; flex: none; padding-bottom: 16px; }
+        .settings-heading h2,
+        .settings-heading button { color: var(--settings-muted); }
+        .settings-tabs { display: flex; flex: none; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--settings-line); }
+        .settings-tabs button {
+            flex: 1;
+            min-height: 38px;
+            padding: 8px 12px;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            color: var(--settings-muted);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .settings-tabs button:hover { background: var(--settings-soft); }
+        .settings-tabs button[aria-selected="true"] {
+            border-bottom-color: color-mix(in srgb, var(--accent-color) 70%, #263b55 30%);
+            background: var(--settings-soft);
+            color: var(--settings-text);
+            font-weight: 700;
+        }
+        .settings-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 6px 12px 2px; }
+        .settings-panel[hidden] { display: none; }
+        .feature-panel { display: flex; flex-direction: column; overflow: hidden; color: var(--settings-text); font-size: 13px; line-height: 1.6; }
+        .feature-guide-heading { flex: none; padding: 0 0 12px; background: #ffffff; border-bottom: 1px solid var(--settings-line); }
+        #feature-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 4px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        .feature-guide-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+        .feature-guide-title h3 { font-size: 18px; font-weight: 700; }
+        .feature-version { padding: 2px 8px; background: var(--settings-soft); border: 1px solid var(--settings-line); border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+        .feature-guide-heading > p { margin-top: 8px; }
+        .feature-platform-note { color: var(--settings-muted); font-size: 12px; }
+        .feature-search-label { display: block; margin-top: 12px; font-weight: 600; }
+        .feature-search-row { display: flex; gap: 6px; margin-top: 4px; }
+        #feature-search { width: 100%; min-width: 0; min-height: 36px; padding: 7px 9px; color: var(--settings-text); background: #ffffff; border: 1px solid #a7b7ca; border-radius: 5px; }
+        #feature-clear { flex: none; padding: 0 9px; border: 1px solid var(--settings-line); border-radius: 5px; background: var(--settings-soft); color: var(--settings-text); cursor: pointer; }
+        #feature-clear[hidden] { display: none; }
+        .feature-outline-tools { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+        #feature-results { color: var(--settings-muted); font-size: 12px; }
+        .feature-fold-actions { display: flex; gap: 12px; }
+        .feature-fold-actions button { min-height: 28px; padding: 2px 0; color: var(--settings-muted); font-size: 12px; cursor: pointer; }
+        .feature-fold-actions button:hover { color: var(--settings-text); text-decoration: underline; }
+        .feature-fold-actions button:disabled { opacity: .5; cursor: default; text-decoration: none; }
+        .feature-category { margin-bottom: 4px; }
+        .feature-outline-row { display: flex; align-items: baseline; gap: 8px; min-height: 32px; padding: 5px 4px; list-style: none; cursor: pointer; overflow-wrap: anywhere; }
+        .feature-outline-row::-webkit-details-marker { display: none; }
+        .feature-outline-row::before { content: ""; align-self: flex-start; flex: none; margin: 6px 2px 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid var(--settings-muted); }
+        details[open] > .feature-outline-row::before { transform: rotate(90deg); }
+        .feature-outline-row:hover { background: var(--settings-soft); }
+        .feature-outline-row:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+        .feature-outline-marker { flex: none; min-width: 2ch; color: var(--settings-muted); }
+        .feature-category > .feature-outline-row { font-weight: 600; }
+        .feature-category > .feature-outline-row > .feature-outline-marker { min-width: 4ch; }
+        .feature-outline-label { flex: 1; min-width: 0; }
+        .feature-outline-count { flex: none; color: var(--settings-muted); font-size: 10px; font-weight: 400; white-space: nowrap; }
+        .feature-children { margin-left: 11px; padding-left: 16px; border-left: 1px solid var(--settings-line); }
+        .feature-body { margin-left: 11px; padding: 2px 4px 12px 24px; border-left: 1px solid var(--settings-line); overflow-wrap: anywhere; }
+        .feature-location { color: var(--settings-muted); font-size: 11px; }
+        .feature-description { margin-top: 5px; }
+        .feature-example { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--settings-line); color: var(--settings-text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; tab-size: 3; }
+        .feature-shortcuts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+        .feature-shortcuts kbd { max-width: 100%; color: var(--settings-muted); font-size: 11px; overflow-wrap: anywhere; }
+        .feature-empty { margin-top: 20px; color: var(--settings-muted); }
 
         .settings-grid {
             display: grid;

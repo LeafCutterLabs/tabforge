@@ -29,11 +29,13 @@ const notices = ['tailwindcss', 'lucide', 'jszip'].map(name => {
     return `${name} ${pkg.version}\n${fs.readFileSync(path.join(directory, license), 'utf8')}`;
 });
 fs.writeFileSync(path.join(output, 'THIRD_PARTY_NOTICES.txt'), notices.join('\n\n'));
+const packageInfo = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+fs.writeFileSync(path.join(output, 'release.js'), `window.TabForgeRelease = Object.freeze(${JSON.stringify({ version: packageInfo.version })});\n`);
 const deploy = path.join(root, 'dist');
 if (path.dirname(deploy) !== root) throw new Error('Deploy output must stay inside the project');
 fs.rmSync(deploy, { recursive: true, force: true });
 fs.mkdirSync(deploy, { recursive: true });
-for (const file of ['index.html', 'app.js', 'styles.css', 'editor.css', 'tab-model.js', 'commands.js', 'persistence.js']) {
+for (const file of ['index.html', 'app.js', 'styles.css', 'editor.css', 'tab-model.js', 'commands.js', 'persistence.js', 'feature-catalog.js', 'feature-guide.js']) {
     fs.copyFileSync(path.join(root, file), path.join(deploy, file));
 }
 fs.cpSync(output, path.join(deploy, 'assets'), { recursive: true });

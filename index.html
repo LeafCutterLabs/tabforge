@@ -73,7 +73,7 @@
             <button id="open-find-btn" class="header-command search-launch" title="Find (Ctrl+F)" aria-label="Find and replace" aria-controls="find-bar" aria-expanded="false">
                 <i data-lucide="search"></i>
             </button>
-            <button id="open-settings-btn" class="header-command settings-button" title="Settings" aria-label="Settings">
+            <button id="open-settings-btn" class="header-command settings-button" title="Settings" aria-label="Settings" aria-controls="settings-menu" aria-expanded="false">
                 <i data-lucide="settings"></i>
             </button>
         </div>
@@ -117,12 +117,18 @@
 
     <!-- Settings Overlay -->
     <div id="settings-overlay" class="fixed inset-0 bg-black/40 hidden z-[60] transition-opacity duration-200 opacity-0"></div>
-    <aside id="settings-menu" class="fixed top-0 right-0 h-full bg-white border-l border-slate-200 z-[70] p-6 transition-colors overflow-y-auto text-slate-800">
-        <div class="flex items-center justify-between mb-8">
-            <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400">Settings</h2>
-            <button id="close-settings-btn" class="p-1 hover:bg-slate-100 rounded text-slate-400"><i data-lucide="x" class="w-4 h-4"></i></button>
+    <aside id="settings-menu" role="dialog" aria-modal="true" aria-labelledby="settings-heading" aria-hidden="true" inert class="fixed top-0 right-0 h-full bg-white border-l border-slate-200 z-[70] p-6 transition-colors text-slate-800">
+        <div class="settings-heading">
+            <h2 id="settings-heading" class="text-xs font-bold uppercase tracking-widest text-slate-400">Settings</h2>
+            <button id="close-settings-btn" aria-label="Close settings" class="p-1 hover:bg-slate-100 rounded text-slate-400"><i data-lucide="x" class="w-4 h-4"></i></button>
         </div>
 
+        <div class="settings-tabs" role="tablist" aria-label="Settings pages">
+            <button id="settings-preferences-tab" type="button" role="tab" aria-selected="true" aria-controls="settings-preferences-panel" tabindex="0">Preferences</button>
+            <button id="settings-features-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-features-panel" tabindex="-1">Features</button>
+        </div>
+
+        <div id="settings-preferences-panel" class="settings-panel" role="tabpanel" aria-labelledby="settings-preferences-tab">
         <div class="settings-grid">
             <div class="settings-column">
                 <div>
@@ -200,8 +206,33 @@
                 </div>
             </div>
         </div>
+        </div>
+
+        <div id="settings-features-panel" class="settings-panel feature-panel" role="tabpanel" aria-labelledby="settings-features-tab" hidden>
+            <div class="feature-guide-heading">
+                <div class="feature-guide-title"><h3>Feature guide</h3><span id="feature-version" class="feature-version"></span></div>
+                <p>Explore the features in this version. Open an item for instructions, or search for something you want to do.</p>
+                <p class="feature-platform-note">Shortcuts show Ctrl; on a Mac, use Cmd instead.</p>
+                <label for="feature-search" class="feature-search-label">Find a feature or shortcut</label>
+                <div class="feature-search-row">
+                    <input id="feature-search" type="search" placeholder="Try moving lines, outline, or Ctrl+S" aria-controls="feature-list" autocomplete="off">
+                    <button id="feature-clear" type="button" hidden>Clear</button>
+                </div>
+                <div class="feature-outline-tools">
+                    <p id="feature-results" role="status" aria-live="polite" aria-atomic="true"></p>
+                    <div class="feature-fold-actions" role="group" aria-label="Feature outline controls">
+                        <button id="feature-expand-all" type="button" aria-controls="feature-list">Expand all</button>
+                        <button id="feature-collapse-all" type="button" aria-controls="feature-list">Collapse all</button>
+                    </div>
+                </div>
+            </div>
+            <div id="feature-list" role="group" aria-label="Feature outline"></div>
+        </div>
     </aside>
 
+    <script src="./assets/release.js"></script>
+    <script src="./feature-catalog.js"></script>
+    <script src="./feature-guide.js"></script>
     <script src="./tab-model.js"></script>
     <script src="./persistence.js"></script>
     <script src="./commands.js"></script>
